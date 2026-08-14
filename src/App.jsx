@@ -37,3 +37,4 @@ function CapBadge({ status }) {
     />
   );
 }
+export default App;
