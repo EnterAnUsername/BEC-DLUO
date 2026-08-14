@@ -348,4 +348,251 @@ function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany })
         ))}
         <button onClick={() => setShowMasked((s) => !s)} className="flex items-center gap-2 px-3 py-2 rounded text-sm ml-auto" style={{ background: showMasked ? '#D98F2B' : '#241F1A', color: showMasked ? '#1B1815' : '#A69884', border: '1px solid #3A332B' }}>
           {showMasked ? <Eye size={15} /> : <EyeOff size={15} />}
-          Masqués {showMasked ? 'affi
+          Masqués {showMasked ? 'affichés' : 'cachés'} ({maskedCount})
+        </button>
+      </div>
+
+      {selected.length > 0 && (
+        <div className="px-5 md:px-10 py-2 flex items-center gap-3 flex-wrap" style={{ background: '#2D1E19', borderBottom: '1px solid #3A332B' }}>
+          <span className="text-sm" style={{ color: '#D98F2B' }}>{selected.length} sélectionnée(s)</span>
+          <button onClick={maskSelected} className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs" style={{ background: '#7A9B5E', color: '#1B1815' }}><EyeOff size={12} /> Masquer la sélection</button>
+          <button onClick={deleteSelected} className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs" style={{ background: '#C1502E', color: '#F3E9D8' }}><Trash2 size={12} /> Supprimer la sélection</button>
+          <button onClick={() => setSelected([])} className="text-xs" style={{ color: '#A69884' }}>Annuler</button>
+        </div>
+      )}
+
+      <div className="hidden md:block px-10 py-6">
+        <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ color: '#A69884', textAlign: 'left' }}>
+              <th className="pb-3 pr-2"><input type="checkbox" checked={allSelected} onChange={toggleSelectAll} style={{ accentColor: '#D98F2B' }} /></th>
+              <th className="pb-3 font-medium" style={{ width: 24 }}></th>
+              <th className="pb-3 font-medium">Nom</th>
+              <th className="pb-3 font-medium">Style</th>
+              <th className="pb-3 font-medium font-mono">°</th>
+              <th className="pb-3 font-medium">Format</th>
+              <th className="pb-3 font-medium">Rayon</th>
+              <th className="pb-3 font-medium font-mono">DLUO</th>
+              <th className="pb-3 font-medium font-mono">Qté</th>
+              <th className="pb-3 font-medium text-center">Fait</th>
+              <th className="pb-3 font-medium"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((p, i) => (
+              <tr key={p.id} className="row-enter" style={{ borderTop: '1px solid #2D2822', animationDelay: `${i * 30}ms`, opacity: p.trie ? 0.5 : 1 }}>
+                <td className="py-3 pr-2"><input type="checkbox" checked={selected.includes(p.id)} onChange={() => toggleSelect(p.id)} style={{ accentColor: '#D98F2B' }} /></td>
+                <td className="py-3"><CapBadge status={statusOf(p.dluo)} /></td>
+                <td className="py-3 font-medium">{p.nom}</td>
+                <td className="py-3" style={{ color: '#A69884' }}>{p.style}</td>
+                <td className="py-3 font-mono">{p.degre}%</td>
+                <td className="py-3" style={{ color: '#A69884' }}>{p.format}</td>
+                <td className="py-3" style={{ color: '#A69884' }}>{p.rayon}</td>
+                <td className="py-3"><DluoDisplay dluo={p.dluo} /></td>
+                <td className="py-3 font-mono">{p.quantite}</td>
+                <td className="py-3 text-center">
+                  <button onClick={() => toggleTrie(p.id)} title={p.trie ? 'Remettre en rayon' : 'Marquer comme fait (masquer)'} className="p-1.5 rounded inline-flex" style={{ background: p.trie ? '#7A9B5E' : '#241F1A', border: '1px solid #3A332B', color: p.trie ? '#1B1815' : '#6B645A' }}>
+                    <Check size={13} />
+                  </button>
+                </td>
+                <td className="py-3 text-right">
+                  <button onClick={() => deleteProduct(p.id)} title="Supprimer définitivement" className="p-1.5 rounded" style={{ color: '#C1502E' }}><Trash2 size={14} /></button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {filtered.length === 0 && <p className="text-center py-10" style={{ color: '#6B645A' }}>Aucune référence ne correspond à ces filtres.</p>}
+      </div>
+
+      <div className="md:hidden px-5 py-4 flex flex-col gap-3">
+        {filtered.map((p, i) => (
+          <div key={p.id} className="row-enter p-4 rounded" style={{ background: '#241F1A', border: '1px solid #3A332B', animationDelay: `${i * 30}ms`, opacity: p.trie ? 0.5 : 1 }}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <input type="checkbox" checked={selected.includes(p.id)} onChange={() => toggleSelect(p.id)} style={{ accentColor: '#D98F2B' }} />
+                <CapBadge status={statusOf(p.dluo)} />
+                <span className="font-medium">{p.nom}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => toggleTrie(p.id)} title={p.trie ? 'Remettre en rayon' : 'Marquer comme fait (masquer)'} className="p-1.5 rounded" style={{ background: p.trie ? '#7A9B5E' : '#241F1A', border: '1px solid #3A332B', color: p.trie ? '#1B1815' : '#6B645A' }}>
+                  <Check size={13} />
+                </button>
+                <button onClick={() => deleteProduct(p.id)} title="Supprimer définitivement" className="p-1.5 rounded" style={{ color: '#C1502E' }}><Trash2 size={14} /></button>
+              </div>
+            </div>
+            <div className="mb-1.5"><DluoDisplay dluo={p.dluo} /></div>
+            <div className="text-xs flex flex-wrap gap-x-3 gap-y-1" style={{ color: '#A69884' }}>
+              <span>{p.style}</span>
+              <span className="font-mono">{p.degre}%</span>
+              <span>{p.format}</span>
+              <span>{p.rayon}</span>
+              <span className="font-mono">Qté {p.quantite}</span>
+            </div>
+          </div>
+        ))}
+        {filtered.length === 0 && <p className="text-center py-10" style={{ color: '#6B645A' }}>Aucune référence ne correspond à ces filtres.</p>}
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [view, setView] = useState('accueil');
+  const [mode, setMode] = useState('single');
+  const [form, setForm] = useState({ ...EMPTY_ROW });
+  const [confirmed, setConfirmed] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [bulkRows, setBulkRows] = useState([{ ...EMPTY_ROW }, { ...EMPTY_ROW }, { ...EMPTY_ROW }]);
+  const [confirmedCount, setConfirmedCount] = useState(0);
+  const [styleOptions, setStyleOptions] = useState([]);
+  const [rayonOptions, setRayonOptions] = useState([]);
+  const [formatOptions, setFormatOptions] = useState([]);
+
+  useEffect(() => { loadAll(); }, []);
+
+  async function loadAll() {
+    setLoading(true);
+    setLoadError('');
+    const [{ data: prod, error: prodErr }, { data: cats, error: catErr }] = await Promise.all([
+      supabase.from('produits').select('*').order('dluo', { ascending: true }),
+      supabase.from('categories').select('*'),
+    ]);
+    if (prodErr || catErr) {
+      setLoadError((prodErr || catErr).message);
+    } else {
+      setProducts(prod || []);
+      setStyleOptions((cats || []).filter((c) => c.type === 'style').map((c) => c.value));
+      setRayonOptions((cats || []).filter((c) => c.type === 'rayon').map((c) => c.value));
+      setFormatOptions((cats || []).filter((c) => c.type === 'format').map((c) => c.value));
+    }
+    setLoading(false);
+  }
+
+  const aTrier = products.filter((p) => !p.trie).length;
+
+  function cleanRow(r) {
+    return {
+      nom: r.nom,
+      style: r.style || null,
+      degre: r.degre ? parseFloat(r.degre) : null,
+      format: r.format || null,
+      rayon: r.rayon || null,
+      date_entree: r.date_entree || null,
+      dluo: r.dluo,
+      quantite: r.quantite ? parseInt(r.quantite) : 0,
+      trie: false,
+    };
+  }
+
+  async function handleAdd() {
+    if (!form.nom.trim() || !form.dluo) {
+      setFormError('Merci de renseigner au moins le nom et la DLUO.');
+      return;
+    }
+    setFormError('');
+    setSaving(true);
+    const { data, error } = await supabase.from('produits').insert([cleanRow(form)]).select();
+    setSaving(false);
+    if (error) { setFormError(error.message); return; }
+    setProducts((prev) => [...prev, ...data]);
+    setForm({ ...EMPTY_ROW });
+    setConfirmed(true);
+    setTimeout(() => setConfirmed(false), 2500);
+  }
+
+  async function handleSubmitBulk() {
+    const valid = bulkRows.filter((r) => r.nom.trim() && r.dluo);
+    if (valid.length === 0) return;
+    setSaving(true);
+    const { data, error } = await supabase.from('produits').insert(valid.map(cleanRow)).select();
+    setSaving(false);
+    if (error) { alert('Erreur : ' + error.message); return; }
+    setProducts((prev) => [...prev, ...data]);
+    setBulkRows([{ ...EMPTY_ROW }, { ...EMPTY_ROW }, { ...EMPTY_ROW }]);
+    setConfirmedCount(valid.length);
+    setTimeout(() => setConfirmedCount(0), 3000);
+  }
+
+  async function toggleTrie(id) {
+    const p = products.find((x) => x.id === id);
+    const newVal = !p.trie;
+    setProducts((prev) => prev.map((x) => (x.id === id ? { ...x, trie: newVal } : x)));
+    const { error } = await supabase.from('produits').update({ trie: newVal }).eq('id', id);
+    if (error) { alert('Erreur : ' + error.message); loadAll(); }
+  }
+
+  async function deleteProduct(id) {
+    setProducts((prev) => prev.filter((p) => p.id !== id));
+    const { error } = await supabase.from('produits').delete().eq('id', id);
+    if (error) { alert('Erreur : ' + error.message); loadAll(); }
+  }
+
+  async function deleteMany(ids) {
+    setProducts((prev) => prev.filter((p) => !ids.includes(p.id)));
+    const { error } = await supabase.from('produits').delete().in('id', ids);
+    if (error) { alert('Erreur : ' + error.message); loadAll(); }
+  }
+
+  async function maskMany(ids) {
+    setProducts((prev) => prev.map((p) => (ids.includes(p.id) ? { ...p, trie: true } : p)));
+    const { error } = await supabase.from('produits').update({ trie: true }).in('id', ids);
+    if (error) { alert('Erreur : ' + error.message); loadAll(); }
+  }
+
+  async function addCategory(type, value, setter) {
+    setter((prev) => [...prev, value]);
+    const { error } = await supabase.from('categories').insert([{ type, value }]);
+    if (error) { alert('Erreur : ' + error.message); loadAll(); }
+  }
+  async function removeCategory(type, value, setter) {
+    setter((prev) => prev.filter((o) => o !== value));
+    const { error } = await supabase.from('categories').delete().eq('type', type).eq('value', value);
+    if (error) { alert('Erreur : ' + error.message); loadAll(); }
+  }
+
+  const catProps = {
+    styleOptions,
+    addStyleOption: (v) => addCategory('style', v, setStyleOptions),
+    removeStyleOption: (v) => removeCategory('style', v, setStyleOptions),
+    rayonOptions,
+    addRayonOption: (v) => addCategory('rayon', v, setRayonOptions),
+    removeRayonOption: (v) => removeCategory('rayon', v, setRayonOptions),
+    formatOptions,
+    addFormatOption: (v) => addCategory('format', v, setFormatOptions),
+    removeFormatOption: (v) => removeCategory('format', v, setFormatOptions),
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', background: '#1B1815', color: '#F3E9D8' }}>
+      <NavTabs view={view} setView={setView} aTrier={aTrier} />
+      {loadError && (
+        <div className="mx-5 md:mx-10 mt-4 p-3 rounded flex items-center gap-2 text-sm" style={{ background: '#3A241F', color: '#E8A98C', border: '1px solid #8B2E1E' }}>
+          <AlertCircle size={16} /> Impossible de charger les données : {loadError}. Vérifie les clés Supabase (variables d'environnement).
+        </div>
+      )}
+      {loading ? (
+        <div className="flex items-center gap-2 px-5 md:px-10 py-10 text-sm" style={{ color: '#A69884' }}>
+          <Loader2 size={16} className="animate-spin" /> Chargement...
+        </div>
+      ) : (
+        <div style={{ borderBottom: '1px solid #3A332B' }}>
+          {view === 'accueil' ? (
+            <AccueilView
+              mode={mode} setMode={setMode} form={form} setForm={setForm} onAdd={handleAdd}
+              saving={saving} confirmed={confirmed} formError={formError}
+              bulkRows={bulkRows} setBulkRows={setBulkRows} onSubmitBulk={handleSubmitBulk}
+              confirmedCount={confirmedCount} catProps={catProps}
+            />
+          ) : (
+            <CaveView products={products} toggleTrie={toggleTrie} deleteProduct={deleteProduct} deleteMany={deleteMany} maskMany={maskMany} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
