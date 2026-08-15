@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Home, Beer, Camera, Search, ChevronDown, Check, Eye, EyeOff, Plus, Trash2, AlertCircle, ListPlus, X, Loader2 } from 'lucide-react';
+import { Home, Beer, Camera, Search, ChevronDown, Check, Eye, EyeOff, Plus, Trash2, AlertCircle, ListPlus, X, Loader2, Pencil, ArrowUpDown } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
-const EMPTY_ROW = { nom: '', style: '', degre: '', format: '', rayon: '', date_entree: '', dluo: '', quantite: '', trie: false };
+const EMPTY_ROW = { nom: '', style: '', degre: '', format: '', rayon: '', lot: '', distributeur: '', date_entree: '', dluo: '', quantite: '', trie: false };
 
 function daysLeft(dluo) {
   const today = new Date();
@@ -116,7 +116,7 @@ function SimpleSelect({ label, value, onChange, options, onAddOption, onRemoveOp
   );
 }
 
-function NavTabs({ view, setView, aTrier }) {
+function NavTabs({ view, setView, aTrier, urgentCount }) {
   const tabs = [
     { id: 'accueil', label: 'Accueil', icon: Home },
     { id: 'cave', label: 'Cave', icon: Beer },
@@ -136,7 +136,10 @@ function NavTabs({ view, setView, aTrier }) {
             <Icon size={16} />
             {t.label}
             {t.id === 'cave' && aTrier > 0 && (
-              <span className="ml-1 px-1.5 py-0.5 rounded-full text-xs font-mono" style={{ background: '#D9A628', color: '#1B1815' }}>{aTrier}</span>
+              <span title="Non traitées" className="ml-1 px-1.5 py-0.5 rounded-full text-xs font-mono" style={{ background: '#D9A628', color: '#1B1815' }}>{aTrier}</span>
+            )}
+            {t.id === 'cave' && urgentCount > 0 && (
+              <span title="DLUO à J-30 ou moins" className="px-1.5 py-0.5 rounded-full text-xs font-mono" style={{ background: '#C1502E', color: '#F3E9D8' }}>{urgentCount}</span>
             )}
           </button>
         );
@@ -145,7 +148,7 @@ function NavTabs({ view, setView, aTrier }) {
   );
 }
 
-function SingleAddForm({ form, setForm, onAdd, saving, confirmed, formError, catProps }) {
+function SingleAddForm({ form, setForm, onAdd, saving, confirmed, formError, catProps, editing, onCancelEdit }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <label className="text-xs" style={{ color: '#A69884' }}>
@@ -165,6 +168,13 @@ function SingleAddForm({ form, setForm, onAdd, saving, confirmed, formError, cat
       <SimpleSelect label="Pays d'origine / Rayon" value={form.rayon} onChange={(v) => setForm({ ...form, rayon: v })} options={catProps.rayonOptions} onAddOption={catProps.addRayonOption} onRemoveOption={catProps.removeRayonOption} />
 
       <label className="text-xs" style={{ color: '#A69884' }}>
+        Numéro de lot
+        <input type="text" value={form.lot} onChange={(e) => setForm({ ...form, lot: e.target.value })} className="mt-1 w-full px-3 py-2.5 rounded text-sm" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#F3E9D8' }} />
+      </label>
+
+      <SimpleSelect label="Distributeur" value={form.distributeur} onChange={(v) => setForm({ ...form, distributeur: v })} options={catProps.distributeurOptions} onAddOption={catProps.addDistributeurOption} onRemoveOption={catProps.removeDistributeurOption} />
+
+      <label className="text-xs" style={{ color: '#A69884' }}>
         Date d'entrée
         <input type="date" value={form.date_entree} onChange={(e) => setForm({ ...form, date_entree: e.target.value })} className="mt-1 w-full px-3 py-2.5 rounded text-sm" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#F3E9D8' }} />
       </label>
@@ -179,12 +189,17 @@ function SingleAddForm({ form, setForm, onAdd, saving, confirmed, formError, cat
         <input type="number" value={form.quantite} onChange={(e) => setForm({ ...form, quantite: e.target.value })} className="mt-1 w-full px-3 py-2.5 rounded text-sm" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#F3E9D8' }} />
       </label>
 
-      <div className="sm:col-span-2 flex items-center gap-3 mt-2">
+      <div className="sm:col-span-2 flex items-center gap-3 mt-2 flex-wrap">
         <button type="button" onClick={onAdd} disabled={saving} className="flex items-center gap-2 px-5 py-2.5 rounded text-sm font-medium" style={{ background: '#D98F2B', color: '#1B1815', opacity: saving ? 0.7 : 1 }}>
           {saving && <Loader2 size={14} className="animate-spin" />}
-          Ajouter à la Cave
+          {editing ? 'Enregistrer les modifications' : 'Ajouter à la Cave'}
         </button>
-        {confirmed && <span className="flex items-center gap-1 text-sm" style={{ color: '#7A9B5E' }}><Check size={15} /> Ajouté</span>}
+        {editing && (
+          <button type="button" onClick={onCancelEdit} className="px-4 py-2.5 rounded text-sm font-medium" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#A69884' }}>
+            Annuler
+          </button>
+        )}
+        {confirmed && <span className="flex items-center gap-1 text-sm" style={{ color: '#7A9B5E' }}><Check size={15} /> {editing ? 'Modifié' : 'Ajouté'}</span>}
         {formError && <span className="flex items-center gap-1 text-sm" style={{ color: '#C1502E' }}><AlertCircle size={15} /> {formError}</span>}
       </div>
       <p className="text-xs sm:col-span-2" style={{ color: '#6B645A' }}>Enregistré directement dans la base — visible par toute l'équipe.</p>
@@ -210,6 +225,8 @@ function BulkAddForm({ rows, setRows, onSubmitBulk, saving, confirmedCount, catP
               <th className="pb-2 pr-2 font-medium">Degré</th>
               <th className="pb-2 pr-2 font-medium">Format</th>
               <th className="pb-2 pr-2 font-medium">Rayon</th>
+              <th className="pb-2 pr-2 font-medium">Lot</th>
+              <th className="pb-2 pr-2 font-medium">Distrib.</th>
               <th className="pb-2 pr-2 font-medium">Entrée</th>
               <th className="pb-2 pr-2 font-medium">DLUO</th>
               <th className="pb-2 pr-2 font-medium">Qté</th>
@@ -239,6 +256,13 @@ function BulkAddForm({ rows, setRows, onSubmitBulk, saving, confirmedCount, catP
                     {catProps.rayonOptions.map((o) => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </td>
+                <td className="py-1.5 pr-2"><input value={r.lot} onChange={(e) => updateRow(i, 'lot', e.target.value)} className="w-20 px-2 py-2 rounded text-sm" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#F3E9D8' }} /></td>
+                <td className="py-1.5 pr-2">
+                  <select value={r.distributeur} onChange={(e) => updateRow(i, 'distributeur', e.target.value)} className="w-24 px-2 py-2 rounded text-sm" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#F3E9D8' }}>
+                    <option value="">—</option>
+                    {catProps.distributeurOptions.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </td>
                 <td className="py-1.5 pr-2"><input type="date" value={r.date_entree} onChange={(e) => updateRow(i, 'date_entree', e.target.value)} className="w-32 px-2 py-2 rounded text-sm" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#F3E9D8' }} /></td>
                 <td className="py-1.5 pr-2"><input type="date" value={r.dluo} onChange={(e) => updateRow(i, 'dluo', e.target.value)} className="w-32 px-2 py-2 rounded text-sm" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#F3E9D8' }} /></td>
                 <td className="py-1.5 pr-2"><input type="number" value={r.quantite} onChange={(e) => updateRow(i, 'quantite', e.target.value)} className="w-16 px-2 py-2 rounded text-sm" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#F3E9D8' }} /></td>
@@ -265,25 +289,29 @@ function BulkAddForm({ rows, setRows, onSubmitBulk, saving, confirmedCount, catP
 }
 
 function AccueilView(props) {
-  const { mode, setMode } = props;
+  const { mode, setMode, editing } = props;
   return (
     <div className="px-5 md:px-10 py-8" style={{ maxWidth: mode === 'bulk' ? 'none' : 640 }}>
       <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
-        <h1 className="font-display text-2xl md:text-3xl">{mode === 'single' ? 'Ajouter une référence' : 'Ajout groupé (livraison)'}</h1>
-        <div className="flex gap-2">
-          <button onClick={() => setMode(mode === 'single' ? 'bulk' : 'single')} className="flex items-center gap-2 px-3 py-2 rounded text-xs font-medium" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#D98F2B' }}>
-            <ListPlus size={14} /> {mode === 'single' ? 'Mode livraison' : 'Mode simple'}
-          </button>
-          <button disabled title="Bientôt disponible" className="flex items-center gap-2 px-3 py-2 rounded text-xs font-medium cursor-not-allowed" style={{ background: '#241F1A', color: '#6B645A', border: '1px solid #3A332B' }}>
-            <Camera size={14} /> Scanner un BL
-          </button>
-        </div>
+        <h1 className="font-display text-2xl md:text-3xl">
+          {editing ? 'Modifier une référence' : mode === 'single' ? 'Ajouter une référence' : 'Ajout groupé (livraison)'}
+        </h1>
+        {!editing && (
+          <div className="flex gap-2">
+            <button onClick={() => setMode(mode === 'single' ? 'bulk' : 'single')} className="flex items-center gap-2 px-3 py-2 rounded text-xs font-medium" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#D98F2B' }}>
+              <ListPlus size={14} /> {mode === 'single' ? 'Mode livraison' : 'Mode simple'}
+            </button>
+            <button disabled title="Bientôt disponible" className="flex items-center gap-2 px-3 py-2 rounded text-xs font-medium cursor-not-allowed" style={{ background: '#241F1A', color: '#6B645A', border: '1px solid #3A332B' }}>
+              <Camera size={14} /> Scanner un BL
+            </button>
+          </div>
+        )}
       </div>
       <p className="text-sm mb-6" style={{ color: '#A69884' }}>
-        {mode === 'single' ? "Renseigne les infos ci-dessous, elles arrivent directement dans la Cave." : 'Remplis une ligne par bière reçue, puis envoie tout en une fois.'}
+        {editing ? 'Modifie les champs puis enregistre.' : mode === 'single' ? "Renseigne les infos ci-dessous, elles arrivent directement dans la Cave." : 'Remplis une ligne par bière reçue, puis envoie tout en une fois.'}
       </p>
-      {mode === 'single' ? (
-        <SingleAddForm form={props.form} setForm={props.setForm} onAdd={props.onAdd} saving={props.saving} confirmed={props.confirmed} formError={props.formError} catProps={props.catProps} />
+      {mode === 'single' || editing ? (
+        <SingleAddForm form={props.form} setForm={props.setForm} onAdd={props.onAdd} saving={props.saving} confirmed={props.confirmed} formError={props.formError} catProps={props.catProps} editing={editing} onCancelEdit={props.onCancelEdit} />
       ) : (
         <BulkAddForm rows={props.bulkRows} setRows={props.setBulkRows} onSubmitBulk={props.onSubmitBulk} saving={props.saving} confirmedCount={props.confirmedCount} catProps={props.catProps} />
       )}
@@ -291,13 +319,21 @@ function AccueilView(props) {
   );
 }
 
-function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany }) {
+const SORT_OPTIONS = {
+  dluo_asc: { label: 'DLUO croissante', fn: (a, b) => daysLeft(a.dluo) - daysLeft(b.dluo) },
+  dluo_desc: { label: 'DLUO décroissante', fn: (a, b) => daysLeft(b.dluo) - daysLeft(a.dluo) },
+  alpha: { label: 'Alphabétique', fn: (a, b) => a.nom.localeCompare(b.nom) },
+  style: { label: 'Par style', fn: (a, b) => (a.style || '').localeCompare(b.style || '') },
+};
+
+function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany, onEdit }) {
   const [search, setSearch] = useState('');
   const [styleFilter, setStyleFilter] = useState('Tous');
   const [rayonFilter, setRayonFilter] = useState('Tous');
   const [statutFilter, setStatutFilter] = useState('Tous');
   const [showMasked, setShowMasked] = useState(false);
   const [selected, setSelected] = useState([]);
+  const [sortBy, setSortBy] = useState('dluo_asc');
 
   const styles = useMemo(() => ['Tous', ...new Set(products.map((p) => p.style).filter(Boolean))], [products]);
   const rayons = useMemo(() => ['Tous', ...new Set(products.map((p) => p.rayon).filter(Boolean))], [products]);
@@ -310,8 +346,8 @@ function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany })
       .filter((p) => styleFilter === 'Tous' || p.style === styleFilter)
       .filter((p) => rayonFilter === 'Tous' || p.rayon === rayonFilter)
       .filter((p) => statutFilter === 'Tous' || statusOf(p.dluo) === statutFilter)
-      .sort((a, b) => daysLeft(a.dluo) - daysLeft(b.dluo));
-  }, [products, search, styleFilter, rayonFilter, statutFilter, showMasked]);
+      .sort(SORT_OPTIONS[sortBy].fn);
+  }, [products, search, styleFilter, rayonFilter, statutFilter, showMasked, sortBy]);
 
   function toggleSelect(id) { setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])); }
   const allSelected = filtered.length > 0 && filtered.every((p) => selected.includes(p.id));
@@ -346,6 +382,12 @@ function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany })
             <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" color="#A69884" />
           </div>
         ))}
+        <div className="relative">
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="pl-8 pr-3 py-2 rounded text-sm" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#F3E9D8', appearance: 'none' }}>
+            {Object.entries(SORT_OPTIONS).map(([key, o]) => <option key={key} value={key}>{o.label}</option>)}
+          </select>
+          <ArrowUpDown size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" color="#A69884" />
+        </div>
         <button onClick={() => setShowMasked((s) => !s)} className="flex items-center gap-2 px-3 py-2 rounded text-sm ml-auto" style={{ background: showMasked ? '#D98F2B' : '#241F1A', color: showMasked ? '#1B1815' : '#A69884', border: '1px solid #3A332B' }}>
           {showMasked ? <Eye size={15} /> : <EyeOff size={15} />}
           Masqués {showMasked ? 'affichés' : 'cachés'} ({maskedCount})
@@ -372,9 +414,12 @@ function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany })
               <th className="pb-3 font-medium font-mono">°</th>
               <th className="pb-3 font-medium">Format</th>
               <th className="pb-3 font-medium">Rayon</th>
+              <th className="pb-3 font-medium">Lot</th>
+              <th className="pb-3 font-medium">Distributeur</th>
               <th className="pb-3 font-medium font-mono">DLUO</th>
               <th className="pb-3 font-medium font-mono">Qté</th>
               <th className="pb-3 font-medium text-center">Fait</th>
+              <th className="pb-3 font-medium"></th>
               <th className="pb-3 font-medium"></th>
             </tr>
           </thead>
@@ -388,12 +433,17 @@ function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany })
                 <td className="py-3 font-mono">{p.degre}%</td>
                 <td className="py-3" style={{ color: '#A69884' }}>{p.format}</td>
                 <td className="py-3" style={{ color: '#A69884' }}>{p.rayon}</td>
+                <td className="py-3 font-mono" style={{ color: '#A69884' }}>{p.lot}</td>
+                <td className="py-3" style={{ color: '#A69884' }}>{p.distributeur}</td>
                 <td className="py-3"><DluoDisplay dluo={p.dluo} /></td>
                 <td className="py-3 font-mono">{p.quantite}</td>
                 <td className="py-3 text-center">
                   <button onClick={() => toggleTrie(p.id)} title={p.trie ? 'Remettre en rayon' : 'Marquer comme fait (masquer)'} className="p-1.5 rounded inline-flex" style={{ background: p.trie ? '#7A9B5E' : '#241F1A', border: '1px solid #3A332B', color: p.trie ? '#1B1815' : '#6B645A' }}>
                     <Check size={13} />
                   </button>
+                </td>
+                <td className="py-3 text-right">
+                  <button onClick={() => onEdit(p)} title="Modifier cette fiche" className="p-1.5 rounded" style={{ color: '#D98F2B' }}><Pencil size={14} /></button>
                 </td>
                 <td className="py-3 text-right">
                   <button onClick={() => deleteProduct(p.id)} title="Supprimer définitivement" className="p-1.5 rounded" style={{ color: '#C1502E' }}><Trash2 size={14} /></button>
@@ -418,6 +468,7 @@ function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany })
                 <button onClick={() => toggleTrie(p.id)} title={p.trie ? 'Remettre en rayon' : 'Marquer comme fait (masquer)'} className="p-1.5 rounded" style={{ background: p.trie ? '#7A9B5E' : '#241F1A', border: '1px solid #3A332B', color: p.trie ? '#1B1815' : '#6B645A' }}>
                   <Check size={13} />
                 </button>
+                <button onClick={() => onEdit(p)} title="Modifier cette fiche" className="p-1.5 rounded" style={{ color: '#D98F2B' }}><Pencil size={14} /></button>
                 <button onClick={() => deleteProduct(p.id)} title="Supprimer définitivement" className="p-1.5 rounded" style={{ color: '#C1502E' }}><Trash2 size={14} /></button>
               </div>
             </div>
@@ -427,6 +478,8 @@ function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany })
               <span className="font-mono">{p.degre}%</span>
               <span>{p.format}</span>
               <span>{p.rayon}</span>
+              {p.lot && <span className="font-mono">Lot {p.lot}</span>}
+              {p.distributeur && <span>{p.distributeur}</span>}
               <span className="font-mono">Qté {p.quantite}</span>
             </div>
           </div>
@@ -452,6 +505,8 @@ export default function App() {
   const [styleOptions, setStyleOptions] = useState([]);
   const [rayonOptions, setRayonOptions] = useState([]);
   const [formatOptions, setFormatOptions] = useState([]);
+  const [distributeurOptions, setDistributeurOptions] = useState([]);
+  const [editingId, setEditingId] = useState(null);
 
   useEffect(() => { loadAll(); }, []);
 
@@ -469,11 +524,13 @@ export default function App() {
       setStyleOptions((cats || []).filter((c) => c.type === 'style').map((c) => c.value));
       setRayonOptions((cats || []).filter((c) => c.type === 'rayon').map((c) => c.value));
       setFormatOptions((cats || []).filter((c) => c.type === 'format').map((c) => c.value));
+      setDistributeurOptions((cats || []).filter((c) => c.type === 'distributeur').map((c) => c.value));
     }
     setLoading(false);
   }
 
   const aTrier = products.filter((p) => !p.trie).length;
+  const urgentCount = products.filter((p) => !p.trie && daysLeft(p.dluo) <= 30).length;
 
   function cleanRow(r) {
     return {
@@ -482,11 +539,31 @@ export default function App() {
       degre: r.degre ? parseFloat(r.degre) : null,
       format: r.format || null,
       rayon: r.rayon || null,
+      lot: r.lot || null,
+      distributeur: r.distributeur || null,
       date_entree: r.date_entree || null,
       dluo: r.dluo,
       quantite: r.quantite ? parseInt(r.quantite) : 0,
-      trie: false,
+      trie: r.trie || false,
     };
+  }
+
+  function startEdit(p) {
+    setForm({
+      nom: p.nom || '', style: p.style || '', degre: p.degre ?? '', format: p.format || '',
+      rayon: p.rayon || '', lot: p.lot || '', distributeur: p.distributeur || '',
+      date_entree: p.date_entree || '', dluo: p.dluo || '', quantite: p.quantite ?? '', trie: p.trie || false,
+    });
+    setEditingId(p.id);
+    setMode('single');
+    setFormError('');
+    setView('accueil');
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setForm({ ...EMPTY_ROW });
+    setFormError('');
   }
 
   async function handleAdd() {
@@ -496,6 +573,17 @@ export default function App() {
     }
     setFormError('');
     setSaving(true);
+    if (editingId) {
+      const { data, error } = await supabase.from('produits').update(cleanRow(form)).eq('id', editingId).select();
+      setSaving(false);
+      if (error) { setFormError(error.message); return; }
+      setProducts((prev) => prev.map((p) => (p.id === editingId ? data[0] : p)));
+      setEditingId(null);
+      setForm({ ...EMPTY_ROW });
+      setConfirmed(true);
+      setTimeout(() => setConfirmed(false), 2500);
+      return;
+    }
     const { data, error } = await supabase.from('produits').insert([cleanRow(form)]).select();
     setSaving(false);
     if (error) { setFormError(error.message); return; }
@@ -565,11 +653,14 @@ export default function App() {
     formatOptions,
     addFormatOption: (v) => addCategory('format', v, setFormatOptions),
     removeFormatOption: (v) => removeCategory('format', v, setFormatOptions),
+    distributeurOptions,
+    addDistributeurOption: (v) => addCategory('distributeur', v, setDistributeurOptions),
+    removeDistributeurOption: (v) => removeCategory('distributeur', v, setDistributeurOptions),
   };
 
   return (
     <div style={{ minHeight: '100vh', background: '#1B1815', color: '#F3E9D8' }}>
-      <NavTabs view={view} setView={setView} aTrier={aTrier} />
+      <NavTabs view={view} setView={setView} aTrier={aTrier} urgentCount={urgentCount} />
       {loadError && (
         <div className="mx-5 md:mx-10 mt-4 p-3 rounded flex items-center gap-2 text-sm" style={{ background: '#3A241F', color: '#E8A98C', border: '1px solid #8B2E1E' }}>
           <AlertCircle size={16} /> Impossible de charger les données : {loadError}. Vérifie les clés Supabase (variables d'environnement).
@@ -587,9 +678,10 @@ export default function App() {
               saving={saving} confirmed={confirmed} formError={formError}
               bulkRows={bulkRows} setBulkRows={setBulkRows} onSubmitBulk={handleSubmitBulk}
               confirmedCount={confirmedCount} catProps={catProps}
+              editing={!!editingId} onCancelEdit={cancelEdit}
             />
           ) : (
-            <CaveView products={products} toggleTrie={toggleTrie} deleteProduct={deleteProduct} deleteMany={deleteMany} maskMany={maskMany} />
+            <CaveView products={products} toggleTrie={toggleTrie} deleteProduct={deleteProduct} deleteMany={deleteMany} maskMany={maskMany} onEdit={startEdit} />
           )}
         </div>
       )}
