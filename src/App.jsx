@@ -1,5 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Home, Beer, Camera, Search, ChevronDown, Check, Eye, EyeOff, Plus, Trash2, AlertCircle, ListPlus, X, Loader2, Pencil, ArrowUpDown } from 'lucide-react';
+import {
+  Home, Beer, Camera, Search, ChevronDown, ChevronRight, Check, Eye, EyeOff, Plus, Trash2,
+  AlertCircle, ListPlus, X, Loader2, Pencil, ArrowUpDown, FlaskConical, Upload, Layers,
+} from 'lucide-react';
 import { supabase } from './supabaseClient';
 
 const EMPTY_ROW = { nom: '', style: '', degre: '', format: '', rayon: '', lot: '', distributeur: '', date_entree: '', dluo: '', quantite: '', trie: false };
@@ -27,6 +30,18 @@ const STATUS_META = {
   j30: { label: 'J-30', color: '#D9A628' },
   ok: { label: 'OK', color: '#7A9B5E' },
 };
+
+// The most urgent status among several lots, used for grouped rows.
+const STATUS_ORDER = ['expire', 'j7', 'j15', 'j30', 'ok'];
+function worstStatus(items) {
+  let idx = STATUS_ORDER.length - 1;
+  for (const it of items) idx = Math.min(idx, STATUS_ORDER.indexOf(statusOf(it.dluo)));
+  return STATUS_ORDER[idx];
+}
+
+function normalizeName(s) {
+  return (s || '').trim().toUpperCase().replace(/\s+/g, ' ');
+}
 
 function CapBadge({ status }) {
   const color = STATUS_META[status].color;
@@ -116,34 +131,44 @@ function SimpleSelect({ label, value, onChange, options, onAddOption, onRemoveOp
   );
 }
 
-function NavTabs({ view, setView, aTrier, urgentCount }) {
+function NavTabs({ view, setView, aTrier, urgentCount, testMode, setTestMode }) {
   const tabs = [
     { id: 'accueil', label: 'Accueil', icon: Home },
     { id: 'cave', label: 'Cave', icon: Beer },
   ];
   return (
-    <nav className="flex gap-1 px-5 md:px-10 pt-5">
-      {tabs.map((t) => {
-        const Icon = t.icon;
-        const active = view === t.id;
-        return (
-          <button
-            key={t.id}
-            onClick={() => setView(t.id)}
-            className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t"
-            style={{ background: active ? '#241F1A' : 'transparent', color: active ? '#F3E9D8' : '#A69884', border: active ? '1px solid #3A332B' : '1px solid transparent', borderBottom: active ? '1px solid #241F1A' : '1px solid transparent', marginBottom: -1 }}
-          >
-            <Icon size={16} />
-            {t.label}
-            {t.id === 'cave' && aTrier > 0 && (
-              <span title="Non traitées" className="ml-1 px-1.5 py-0.5 rounded-full text-xs font-mono" style={{ background: '#D9A628', color: '#1B1815' }}>{aTrier}</span>
-            )}
-            {t.id === 'cave' && urgentCount > 0 && (
-              <span title="DLUO à J-30 ou moins" className="px-1.5 py-0.5 rounded-full text-xs font-mono" style={{ background: '#C1502E', color: '#F3E9D8' }}>{urgentCount}</span>
-            )}
-          </button>
-        );
-      })}
+    <nav className="flex items-center justify-between px-5 md:px-10 pt-5">
+      <div className="flex gap-1">
+        {tabs.map((t) => {
+          const Icon = t.icon;
+          const active = view === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setView(t.id)}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t"
+              style={{ background: active ? '#241F1A' : 'transparent', color: active ? '#F3E9D8' : '#A69884', border: active ? '1px solid #3A332B' : '1px solid transparent', borderBottom: active ? '1px solid #241F1A' : '1px solid transparent', marginBottom: -1 }}
+            >
+              <Icon size={16} />
+              {t.label}
+              {t.id === 'cave' && aTrier > 0 && (
+                <span title="Non traitées" className="ml-1 px-1.5 py-0.5 rounded-full text-xs font-mono" style={{ background: '#D9A628', color: '#1B1815' }}>{aTrier}</span>
+              )}
+              {t.id === 'cave' && urgentCount > 0 && (
+                <span title="DLUO à J-30 ou moins" className="px-1.5 py-0.5 rounded-full text-xs font-mono" style={{ background: '#C1502E', color: '#F3E9D8' }}>{urgentCount}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <button
+        onClick={() => setTestMode((v) => !v)}
+        title="Mode test : les données ne touchent pas le vrai stock"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-medium mb-1"
+        style={{ background: testMode ? '#D98F2B' : '#241F1A', color: testMode ? '#1B1815' : '#6B645A', border: '1px solid #3A332B' }}
+      >
+        <FlaskConical size={12} /> Test
+      </button>
     </nav>
   );
 }
@@ -202,7 +227,9 @@ function SingleAddForm({ form, setForm, onAdd, saving, confirmed, formError, cat
         {confirmed && <span className="flex items-center gap-1 text-sm" style={{ color: '#7A9B5E' }}><Check size={15} /> {editing ? 'Modifié' : 'Ajouté'}</span>}
         {formError && <span className="flex items-center gap-1 text-sm" style={{ color: '#C1502E' }}><AlertCircle size={15} /> {formError}</span>}
       </div>
-      <p className="text-xs sm:col-span-2" style={{ color: '#6B645A' }}>Enregistré directement dans la base — visible par toute l'équipe.</p>
+      <p className="text-xs sm:col-span-2" style={{ color: '#6B645A' }}>
+        Note : si le nom, le style et le format sont identiques à une fiche existante mais avec un lot différent, la Cave regroupera les deux automatiquement.
+      </p>
     </div>
   );
 }
@@ -217,7 +244,7 @@ function BulkAddForm({ rows, setRows, onSubmitBulk, saving, confirmedCount, catP
   return (
     <div>
       <div className="overflow-x-auto -mx-5 px-5 md:mx-0 md:px-0">
-        <table className="text-sm" style={{ borderCollapse: 'collapse', minWidth: 900 }}>
+        <table className="text-sm" style={{ borderCollapse: 'collapse', minWidth: 1100 }}>
           <thead>
             <tr style={{ color: '#A69884', textAlign: 'left' }}>
               <th className="pb-2 pr-2 font-medium">Nom</th>
@@ -319,6 +346,164 @@ function AccueilView(props) {
   );
 }
 
+/* ---------- Import de relevé de ventes (mouvements de stock) ---------- */
+
+// Parses lines like:
+// "360 MOINETTE BLONDE 33CL 1,41 0,000 0,00 -7,000 0,00 3,000 0,000 9,00 7,50 3,27 0,00 %"
+// Header order after the name: PMPA, Entrée, Val.Entree, Stock, Val.Stock, Vendu, CA TTC, CA HT, Marge, Ecoulement, Rentabilité, %
+// "Vendu" is therefore the 6th numeric token after the name (index 5).
+function parseSalesReport(text) {
+  const lines = text.split('\n');
+  const rows = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const tokens = line.split(/\s+/);
+    if (tokens.length < 8) continue;
+    if (!/^\d+$/.test(tokens[0])) continue;
+    const nameEndIdx = tokens.findIndex((t, idx) => idx > 0 && /^-?\d+[,.]\d{2,3}$/.test(t));
+    if (nameEndIdx < 2) continue;
+    const name = tokens.slice(1, nameEndIdx).join(' ');
+    const rest = tokens.slice(nameEndIdx);
+    if (rest.length < 6) continue;
+    const vendu = parseFloat((rest[5] || '0').replace(',', '.'));
+    const qty = Math.round(vendu || 0);
+    if (qty <= 0) continue;
+    rows.push({ nom: name, quantite_vendue: qty });
+  }
+  return rows;
+}
+
+function ImportPanel({ products, applyMovements, onClose }) {
+  const [text, setText] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [applying, setApplying] = useState(false);
+  const [result, setResult] = useState(null);
+
+  function analyze() {
+    const parsed = parseSalesReport(text);
+    const rows = parsed.map((row) => {
+      const matches = products.filter((p) => normalizeName(p.nom) === normalizeName(row.nom));
+      return { ...row, include: matches.length > 0, matchCount: matches.length, totalStock: matches.reduce((s, m) => s + (m.quantite || 0), 0) };
+    });
+    setPreview(rows);
+    setResult(null);
+  }
+
+  function updateRow(i, key, value) {
+    setPreview((prev) => prev.map((r, idx) => (idx === i ? { ...r, [key]: value } : r)));
+  }
+
+  async function apply() {
+    const toApply = preview.filter((r) => r.include && r.quantite_vendue > 0);
+    if (toApply.length === 0) return;
+    setApplying(true);
+    // FIFO by soonest DLUO first across matching lots for each name.
+    const updates = [];
+    for (const row of toApply) {
+      let remaining = row.quantite_vendue;
+      const lots = products
+        .filter((p) => normalizeName(p.nom) === normalizeName(row.nom))
+        .sort((a, b) => daysLeft(a.dluo) - daysLeft(b.dluo));
+      for (const lot of lots) {
+        if (remaining <= 0) break;
+        const current = lot.quantite || 0;
+        const take = Math.min(current, remaining);
+        if (take > 0) {
+          updates.push({ id: lot.id, newQuantite: current - take });
+          remaining -= take;
+        }
+      }
+    }
+    const res = await applyMovements(updates);
+    setApplying(false);
+    setResult({ count: updates.length, unmatched: preview.filter((r) => !r.include).length, error: res?.error });
+  }
+
+  return (
+    <div className="mx-5 md:mx-10 my-4 p-4 rounded" style={{ background: '#241F1A', border: '1px solid #3A332B' }}>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-display text-lg flex items-center gap-2"><Upload size={16} /> Importer un relevé de ventes</h3>
+        <button onClick={onClose} title="Fermer"><X size={16} color="#A69884" /></button>
+      </div>
+      <p className="text-xs mb-3" style={{ color: '#6B645A' }}>
+        Colle le texte du relevé (export de ta caisse). La lecture est automatique mais reste à vérifier avant de valider — les noms doivent correspondre exactement à ceux de la Cave.
+      </p>
+
+      {!preview ? (
+        <>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={6}
+            placeholder="Colle ici le contenu du relevé..."
+            className="w-full px-3 py-2 rounded text-xs font-mono"
+            style={{ background: '#1B1815', border: '1px solid #3A332B', color: '#F3E9D8' }}
+          />
+          <button onClick={analyze} disabled={!text.trim()} className="mt-3 px-4 py-2 rounded text-sm font-medium" style={{ background: '#D98F2B', color: '#1B1815', opacity: text.trim() ? 1 : 0.5 }}>
+            Analyser
+          </button>
+        </>
+      ) : (
+        <>
+          {preview.length === 0 ? (
+            <p className="text-sm" style={{ color: '#A69884' }}>Aucune ligne avec des ventes détectée dans ce texte.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="text-sm w-full" style={{ borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ color: '#A69884', textAlign: 'left' }}>
+                    <th className="pb-2 pr-2 font-medium"></th>
+                    <th className="pb-2 pr-2 font-medium">Nom détecté</th>
+                    <th className="pb-2 pr-2 font-medium">Qté vendue</th>
+                    <th className="pb-2 pr-2 font-medium">Correspondance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.map((r, i) => (
+                    <tr key={i} style={{ borderTop: '1px solid #2D2822', opacity: r.include ? 1 : 0.5 }}>
+                      <td className="py-1.5 pr-2">
+                        <input type="checkbox" checked={r.include} disabled={r.matchCount === 0} onChange={(e) => updateRow(i, 'include', e.target.checked)} style={{ accentColor: '#D98F2B' }} />
+                      </td>
+                      <td className="py-1.5 pr-2">{r.nom}</td>
+                      <td className="py-1.5 pr-2">
+                        <input type="number" value={r.quantite_vendue} onChange={(e) => updateRow(i, 'quantite_vendue', parseInt(e.target.value) || 0)} className="w-16 px-2 py-1 rounded text-sm" style={{ background: '#1B1815', border: '1px solid #3A332B', color: '#F3E9D8' }} />
+                      </td>
+                      <td className="py-1.5 pr-2 text-xs">
+                        {r.matchCount === 0 ? (
+                          <span style={{ color: '#C1502E' }}>Aucune fiche trouvée</span>
+                        ) : (
+                          <span style={{ color: '#7A9B5E' }}>{r.matchCount} lot(s) · stock actuel {r.totalStock}</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="flex items-center gap-3 mt-4 flex-wrap">
+            <button onClick={() => setPreview(null)} className="px-4 py-2 rounded text-sm" style={{ background: '#1B1815', border: '1px solid #3A332B', color: '#A69884' }}>Recommencer</button>
+            {preview.length > 0 && (
+              <button onClick={apply} disabled={applying} className="flex items-center gap-2 px-5 py-2.5 rounded text-sm font-medium" style={{ background: '#D98F2B', color: '#1B1815', opacity: applying ? 0.7 : 1 }}>
+                {applying && <Loader2 size={14} className="animate-spin" />}
+                Appliquer les mouvements
+              </button>
+            )}
+          </div>
+          {result && (
+            <p className="text-sm mt-3" style={{ color: result.error ? '#C1502E' : '#7A9B5E' }}>
+              {result.error ? `Erreur : ${result.error}` : `${result.count} lot(s) mis à jour. ${result.unmatched} ligne(s) ignorée(s) (pas de correspondance).`}
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Cave ---------- */
+
 const SORT_OPTIONS = {
   dluo_asc: { label: 'DLUO croissante', fn: (a, b) => daysLeft(a.dluo) - daysLeft(b.dluo) },
   dluo_desc: { label: 'DLUO décroissante', fn: (a, b) => daysLeft(b.dluo) - daysLeft(a.dluo) },
@@ -326,7 +511,67 @@ const SORT_OPTIONS = {
   style: { label: 'Par style', fn: (a, b) => (a.style || '').localeCompare(b.style || '') },
 };
 
-function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany, onEdit }) {
+function ProductRow({ p, selected, toggleSelect, toggleTrie, onEdit, deleteProduct, indent }) {
+  return (
+    <tr className="row-enter" style={{ borderTop: '1px solid #2D2822', opacity: p.trie ? 0.5 : 1 }}>
+      <td className="py-3 pr-2"><input type="checkbox" checked={selected.includes(p.id)} onChange={() => toggleSelect(p.id)} style={{ accentColor: '#D98F2B' }} /></td>
+      <td className="py-3"><CapBadge status={statusOf(p.dluo)} /></td>
+      <td className="py-3 font-medium" style={{ paddingLeft: indent ? 20 : 0 }}>{indent ? '↳ ' : ''}{p.nom}</td>
+      <td className="py-3" style={{ color: '#A69884' }}>{p.style}</td>
+      <td className="py-3 font-mono">{p.degre}%</td>
+      <td className="py-3" style={{ color: '#A69884' }}>{p.format}</td>
+      <td className="py-3" style={{ color: '#A69884' }}>{p.rayon}</td>
+      <td className="py-3 font-mono" style={{ color: '#A69884' }}>{p.lot}</td>
+      <td className="py-3" style={{ color: '#A69884' }}>{p.distributeur}</td>
+      <td className="py-3"><DluoDisplay dluo={p.dluo} /></td>
+      <td className="py-3 font-mono">{p.quantite}</td>
+      <td className="py-3 text-center">
+        <button onClick={() => toggleTrie(p.id)} title={p.trie ? 'Remettre en rayon' : 'Marquer comme fait (masquer)'} className="p-1.5 rounded inline-flex" style={{ background: p.trie ? '#7A9B5E' : '#241F1A', border: '1px solid #3A332B', color: p.trie ? '#1B1815' : '#6B645A' }}>
+          <Check size={13} />
+        </button>
+      </td>
+      <td className="py-3 text-right">
+        <button onClick={() => onEdit(p)} title="Modifier cette fiche" className="p-1.5 rounded" style={{ color: '#D98F2B' }}><Pencil size={14} /></button>
+      </td>
+      <td className="py-3 text-right">
+        <button onClick={() => deleteProduct(p.id)} title="Supprimer définitivement" className="p-1.5 rounded" style={{ color: '#C1502E' }}><Trash2 size={14} /></button>
+      </td>
+    </tr>
+  );
+}
+
+function ProductCard({ p, selected, toggleSelect, toggleTrie, onEdit, deleteProduct, indent }) {
+  return (
+    <div className="row-enter p-4 rounded" style={{ background: '#241F1A', border: '1px solid #3A332B', opacity: p.trie ? 0.5 : 1, marginLeft: indent ? 14 : 0 }}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <input type="checkbox" checked={selected.includes(p.id)} onChange={() => toggleSelect(p.id)} style={{ accentColor: '#D98F2B' }} />
+          <CapBadge status={statusOf(p.dluo)} />
+          <span className="font-medium">{indent ? '↳ ' : ''}{p.nom}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => toggleTrie(p.id)} title={p.trie ? 'Remettre en rayon' : 'Marquer comme fait (masquer)'} className="p-1.5 rounded" style={{ background: p.trie ? '#7A9B5E' : '#241F1A', border: '1px solid #3A332B', color: p.trie ? '#1B1815' : '#6B645A' }}>
+            <Check size={13} />
+          </button>
+          <button onClick={() => onEdit(p)} title="Modifier cette fiche" className="p-1.5 rounded" style={{ color: '#D98F2B' }}><Pencil size={14} /></button>
+          <button onClick={() => deleteProduct(p.id)} title="Supprimer définitivement" className="p-1.5 rounded" style={{ color: '#C1502E' }}><Trash2 size={14} /></button>
+        </div>
+      </div>
+      <div className="mb-1.5"><DluoDisplay dluo={p.dluo} /></div>
+      <div className="text-xs flex flex-wrap gap-x-3 gap-y-1" style={{ color: '#A69884' }}>
+        <span>{p.style}</span>
+        <span className="font-mono">{p.degre}%</span>
+        <span>{p.format}</span>
+        <span>{p.rayon}</span>
+        {p.lot && <span className="font-mono">Lot {p.lot}</span>}
+        {p.distributeur && <span>{p.distributeur}</span>}
+        <span className="font-mono">Qté {p.quantite}</span>
+      </div>
+    </div>
+  );
+}
+
+function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany, onEdit, applyMovements }) {
   const [search, setSearch] = useState('');
   const [styleFilter, setStyleFilter] = useState('Tous');
   const [rayonFilter, setRayonFilter] = useState('Tous');
@@ -334,6 +579,8 @@ function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany, o
   const [showMasked, setShowMasked] = useState(false);
   const [selected, setSelected] = useState([]);
   const [sortBy, setSortBy] = useState('dluo_asc');
+  const [expanded, setExpanded] = useState([]);
+  const [showImport, setShowImport] = useState(false);
 
   const styles = useMemo(() => ['Tous', ...new Set(products.map((p) => p.style).filter(Boolean))], [products]);
   const rayons = useMemo(() => ['Tous', ...new Set(products.map((p) => p.rayon).filter(Boolean))], [products]);
@@ -349,6 +596,27 @@ function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany, o
       .sort(SORT_OPTIONS[sortBy].fn);
   }, [products, search, styleFilter, rayonFilter, statutFilter, showMasked, sortBy]);
 
+  // Group same name + style + format together (different lots of the same reference).
+  const grouped = useMemo(() => {
+    const seen = new Map();
+    const order = [];
+    for (const p of filtered) {
+      const key = `${normalizeName(p.nom)}|${p.style || ''}|${p.format || ''}`;
+      if (!seen.has(key)) {
+        seen.set(key, []);
+        order.push(key);
+      }
+      seen.get(key).push(p);
+    }
+    return order.map((key) => {
+      const items = seen.get(key).sort((a, b) => daysLeft(a.dluo) - daysLeft(b.dluo));
+      return { key, items, isGroup: items.length > 1 };
+    });
+  }, [filtered]);
+
+  function toggleExpand(key) {
+    setExpanded((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  }
   function toggleSelect(id) { setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])); }
   const allSelected = filtered.length > 0 && filtered.every((p) => selected.includes(p.id));
   function toggleSelectAll() {
@@ -360,10 +628,17 @@ function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany, o
 
   return (
     <div>
-      <div className="px-5 md:px-10 pt-6 pb-4">
-        <h1 className="font-display text-2xl md:text-3xl mb-1">La Cave</h1>
-        <p className="text-sm" style={{ color: '#A69884' }}>{products.length} références au total · {maskedCount} masquées</p>
+      <div className="px-5 md:px-10 pt-6 pb-4 flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h1 className="font-display text-2xl md:text-3xl mb-1">La Cave</h1>
+          <p className="text-sm" style={{ color: '#A69884' }}>{products.length} références au total · {maskedCount} masquées</p>
+        </div>
+        <button onClick={() => setShowImport((s) => !s)} className="flex items-center gap-2 px-3 py-2 rounded text-xs font-medium" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#D98F2B' }}>
+          <Upload size={14} /> Importer un relevé de ventes
+        </button>
       </div>
+
+      {showImport && <ImportPanel products={products} applyMovements={applyMovements} onClose={() => setShowImport(false)} />}
 
       <div className="px-5 md:px-10 py-3 flex flex-wrap gap-3 items-center" style={{ borderTop: '1px solid #3A332B', borderBottom: '1px solid #3A332B' }}>
         <div className="flex items-center gap-2 px-3 py-2 rounded flex-1 min-w-[180px]" style={{ background: '#241F1A', border: '1px solid #3A332B' }}>
@@ -403,6 +678,7 @@ function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany, o
         </div>
       )}
 
+      {/* Table - desktop */}
       <div className="hidden md:block px-10 py-6">
         <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
           <thead>
@@ -424,71 +700,87 @@ function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany, o
             </tr>
           </thead>
           <tbody>
-            {filtered.map((p, i) => (
-              <tr key={p.id} className="row-enter" style={{ borderTop: '1px solid #2D2822', animationDelay: `${i * 30}ms`, opacity: p.trie ? 0.5 : 1 }}>
-                <td className="py-3 pr-2"><input type="checkbox" checked={selected.includes(p.id)} onChange={() => toggleSelect(p.id)} style={{ accentColor: '#D98F2B' }} /></td>
-                <td className="py-3"><CapBadge status={statusOf(p.dluo)} /></td>
-                <td className="py-3 font-medium">{p.nom}</td>
-                <td className="py-3" style={{ color: '#A69884' }}>{p.style}</td>
-                <td className="py-3 font-mono">{p.degre}%</td>
-                <td className="py-3" style={{ color: '#A69884' }}>{p.format}</td>
-                <td className="py-3" style={{ color: '#A69884' }}>{p.rayon}</td>
-                <td className="py-3 font-mono" style={{ color: '#A69884' }}>{p.lot}</td>
-                <td className="py-3" style={{ color: '#A69884' }}>{p.distributeur}</td>
-                <td className="py-3"><DluoDisplay dluo={p.dluo} /></td>
-                <td className="py-3 font-mono">{p.quantite}</td>
-                <td className="py-3 text-center">
-                  <button onClick={() => toggleTrie(p.id)} title={p.trie ? 'Remettre en rayon' : 'Marquer comme fait (masquer)'} className="p-1.5 rounded inline-flex" style={{ background: p.trie ? '#7A9B5E' : '#241F1A', border: '1px solid #3A332B', color: p.trie ? '#1B1815' : '#6B645A' }}>
-                    <Check size={13} />
-                  </button>
-                </td>
-                <td className="py-3 text-right">
-                  <button onClick={() => onEdit(p)} title="Modifier cette fiche" className="p-1.5 rounded" style={{ color: '#D98F2B' }}><Pencil size={14} /></button>
-                </td>
-                <td className="py-3 text-right">
-                  <button onClick={() => deleteProduct(p.id)} title="Supprimer définitivement" className="p-1.5 rounded" style={{ color: '#C1502E' }}><Trash2 size={14} /></button>
-                </td>
-              </tr>
-            ))}
+            {grouped.map((g) => {
+              if (!g.isGroup) {
+                const p = g.items[0];
+                return <ProductRow key={p.id} p={p} selected={selected} toggleSelect={toggleSelect} toggleTrie={toggleTrie} onEdit={onEdit} deleteProduct={deleteProduct} />;
+              }
+              const isOpen = expanded.includes(g.key);
+              const totalQty = g.items.reduce((s, p) => s + (p.quantite || 0), 0);
+              const first = g.items[0];
+              return (
+                <React.Fragment key={g.key}>
+                  <tr style={{ borderTop: '1px solid #2D2822', background: '#211C17' }}>
+                    <td className="py-3 pr-2"></td>
+                    <td className="py-3"><CapBadge status={worstStatus(g.items)} /></td>
+                    <td className="py-3 font-medium">
+                      <button onClick={() => toggleExpand(g.key)} className="flex items-center gap-1.5">
+                        {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                        {first.nom}
+                        <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-mono" style={{ background: '#3A332B', color: '#D98F2B' }}>
+                          <Layers size={10} /> {g.items.length} lots
+                        </span>
+                      </button>
+                    </td>
+                    <td className="py-3" style={{ color: '#A69884' }}>{first.style}</td>
+                    <td className="py-3 font-mono">{first.degre}%</td>
+                    <td className="py-3" style={{ color: '#A69884' }}>{first.format}</td>
+                    <td className="py-3" style={{ color: '#A69884' }}>{first.rayon}</td>
+                    <td className="py-3" style={{ color: '#6B645A' }}>—</td>
+                    <td className="py-3" style={{ color: '#6B645A' }}>—</td>
+                    <td className="py-3 text-xs" style={{ color: '#A69884' }}>prochaine : {first.dluo}</td>
+                    <td className="py-3 font-mono">{totalQty}</td>
+                    <td className="py-3"></td>
+                    <td className="py-3"></td>
+                    <td className="py-3"></td>
+                  </tr>
+                  {isOpen && g.items.map((p) => (
+                    <ProductRow key={p.id} p={p} selected={selected} toggleSelect={toggleSelect} toggleTrie={toggleTrie} onEdit={onEdit} deleteProduct={deleteProduct} indent />
+                  ))}
+                </React.Fragment>
+              );
+            })}
           </tbody>
         </table>
         {filtered.length === 0 && <p className="text-center py-10" style={{ color: '#6B645A' }}>Aucune référence ne correspond à ces filtres.</p>}
       </div>
 
+      {/* Cards - mobile */}
       <div className="md:hidden px-5 py-4 flex flex-col gap-3">
-        {filtered.map((p, i) => (
-          <div key={p.id} className="row-enter p-4 rounded" style={{ background: '#241F1A', border: '1px solid #3A332B', animationDelay: `${i * 30}ms`, opacity: p.trie ? 0.5 : 1 }}>
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <input type="checkbox" checked={selected.includes(p.id)} onChange={() => toggleSelect(p.id)} style={{ accentColor: '#D98F2B' }} />
-                <CapBadge status={statusOf(p.dluo)} />
-                <span className="font-medium">{p.nom}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={() => toggleTrie(p.id)} title={p.trie ? 'Remettre en rayon' : 'Marquer comme fait (masquer)'} className="p-1.5 rounded" style={{ background: p.trie ? '#7A9B5E' : '#241F1A', border: '1px solid #3A332B', color: p.trie ? '#1B1815' : '#6B645A' }}>
-                  <Check size={13} />
-                </button>
-                <button onClick={() => onEdit(p)} title="Modifier cette fiche" className="p-1.5 rounded" style={{ color: '#D98F2B' }}><Pencil size={14} /></button>
-                <button onClick={() => deleteProduct(p.id)} title="Supprimer définitivement" className="p-1.5 rounded" style={{ color: '#C1502E' }}><Trash2 size={14} /></button>
-              </div>
+        {grouped.map((g) => {
+          if (!g.isGroup) {
+            const p = g.items[0];
+            return <ProductCard key={p.id} p={p} selected={selected} toggleSelect={toggleSelect} toggleTrie={toggleTrie} onEdit={onEdit} deleteProduct={deleteProduct} />;
+          }
+          const isOpen = expanded.includes(g.key);
+          const totalQty = g.items.reduce((s, p) => s + (p.quantite || 0), 0);
+          const first = g.items[0];
+          return (
+            <div key={g.key} className="flex flex-col gap-2">
+              <button onClick={() => toggleExpand(g.key)} className="p-4 rounded flex items-center justify-between text-left" style={{ background: '#211C17', border: '1px solid #3A332B' }}>
+                <div className="flex items-center gap-2">
+                  {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <CapBadge status={worstStatus(g.items)} />
+                  <span className="font-medium">{first.nom}</span>
+                  <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-mono" style={{ background: '#3A332B', color: '#D98F2B' }}>
+                    <Layers size={10} /> {g.items.length}
+                  </span>
+                </div>
+                <span className="font-mono text-sm">{totalQty}</span>
+              </button>
+              {isOpen && g.items.map((p) => (
+                <ProductCard key={p.id} p={p} selected={selected} toggleSelect={toggleSelect} toggleTrie={toggleTrie} onEdit={onEdit} deleteProduct={deleteProduct} indent />
+              ))}
             </div>
-            <div className="mb-1.5"><DluoDisplay dluo={p.dluo} /></div>
-            <div className="text-xs flex flex-wrap gap-x-3 gap-y-1" style={{ color: '#A69884' }}>
-              <span>{p.style}</span>
-              <span className="font-mono">{p.degre}%</span>
-              <span>{p.format}</span>
-              <span>{p.rayon}</span>
-              {p.lot && <span className="font-mono">Lot {p.lot}</span>}
-              {p.distributeur && <span>{p.distributeur}</span>}
-              <span className="font-mono">Qté {p.quantite}</span>
-            </div>
-          </div>
-        ))}
+          );
+        })}
         {filtered.length === 0 && <p className="text-center py-10" style={{ color: '#6B645A' }}>Aucune référence ne correspond à ces filtres.</p>}
       </div>
     </div>
   );
 }
+
+/* ---------- App ---------- */
 
 export default function App() {
   const [products, setProducts] = useState([]);
@@ -507,15 +799,18 @@ export default function App() {
   const [formatOptions, setFormatOptions] = useState([]);
   const [distributeurOptions, setDistributeurOptions] = useState([]);
   const [editingId, setEditingId] = useState(null);
+  const [testMode, setTestMode] = useState(false);
 
-  useEffect(() => { loadAll(); }, []);
+  const TBL = { produits: testMode ? 'produits_demo' : 'produits', categories: testMode ? 'categories_demo' : 'categories' };
+
+  useEffect(() => { loadAll(); }, [testMode]);
 
   async function loadAll() {
     setLoading(true);
     setLoadError('');
     const [{ data: prod, error: prodErr }, { data: cats, error: catErr }] = await Promise.all([
-      supabase.from('produits').select('*').order('dluo', { ascending: true }),
-      supabase.from('categories').select('*'),
+      supabase.from(TBL.produits).select('*').order('dluo', { ascending: true }),
+      supabase.from(TBL.categories).select('*'),
     ]);
     if (prodErr || catErr) {
       setLoadError((prodErr || catErr).message);
@@ -574,7 +869,7 @@ export default function App() {
     setFormError('');
     setSaving(true);
     if (editingId) {
-      const { data, error } = await supabase.from('produits').update(cleanRow(form)).eq('id', editingId).select();
+      const { data, error } = await supabase.from(TBL.produits).update(cleanRow(form)).eq('id', editingId).select();
       setSaving(false);
       if (error) { setFormError(error.message); return; }
       setProducts((prev) => prev.map((p) => (p.id === editingId ? data[0] : p)));
@@ -584,7 +879,7 @@ export default function App() {
       setTimeout(() => setConfirmed(false), 2500);
       return;
     }
-    const { data, error } = await supabase.from('produits').insert([cleanRow(form)]).select();
+    const { data, error } = await supabase.from(TBL.produits).insert([cleanRow(form)]).select();
     setSaving(false);
     if (error) { setFormError(error.message); return; }
     setProducts((prev) => [...prev, ...data]);
@@ -597,7 +892,7 @@ export default function App() {
     const valid = bulkRows.filter((r) => r.nom.trim() && r.dluo);
     if (valid.length === 0) return;
     setSaving(true);
-    const { data, error } = await supabase.from('produits').insert(valid.map(cleanRow)).select();
+    const { data, error } = await supabase.from(TBL.produits).insert(valid.map(cleanRow)).select();
     setSaving(false);
     if (error) { alert('Erreur : ' + error.message); return; }
     setProducts((prev) => [...prev, ...data]);
@@ -610,36 +905,50 @@ export default function App() {
     const p = products.find((x) => x.id === id);
     const newVal = !p.trie;
     setProducts((prev) => prev.map((x) => (x.id === id ? { ...x, trie: newVal } : x)));
-    const { error } = await supabase.from('produits').update({ trie: newVal }).eq('id', id);
+    const { error } = await supabase.from(TBL.produits).update({ trie: newVal }).eq('id', id);
     if (error) { alert('Erreur : ' + error.message); loadAll(); }
   }
 
   async function deleteProduct(id) {
     setProducts((prev) => prev.filter((p) => p.id !== id));
-    const { error } = await supabase.from('produits').delete().eq('id', id);
+    const { error } = await supabase.from(TBL.produits).delete().eq('id', id);
     if (error) { alert('Erreur : ' + error.message); loadAll(); }
   }
 
   async function deleteMany(ids) {
     setProducts((prev) => prev.filter((p) => !ids.includes(p.id)));
-    const { error } = await supabase.from('produits').delete().in('id', ids);
+    const { error } = await supabase.from(TBL.produits).delete().in('id', ids);
     if (error) { alert('Erreur : ' + error.message); loadAll(); }
   }
 
   async function maskMany(ids) {
     setProducts((prev) => prev.map((p) => (ids.includes(p.id) ? { ...p, trie: true } : p)));
-    const { error } = await supabase.from('produits').update({ trie: true }).in('id', ids);
+    const { error } = await supabase.from(TBL.produits).update({ trie: true }).in('id', ids);
     if (error) { alert('Erreur : ' + error.message); loadAll(); }
+  }
+
+  // Used by the sales-report import: apply a batch of { id, newQuantite } updates.
+  async function applyMovements(updates) {
+    if (!updates || updates.length === 0) return {};
+    setProducts((prev) => prev.map((p) => {
+      const u = updates.find((x) => x.id === p.id);
+      return u ? { ...p, quantite: u.newQuantite } : p;
+    }));
+    for (const u of updates) {
+      const { error } = await supabase.from(TBL.produits).update({ quantite: u.newQuantite }).eq('id', u.id);
+      if (error) { loadAll(); return { error: error.message }; }
+    }
+    return {};
   }
 
   async function addCategory(type, value, setter) {
     setter((prev) => [...prev, value]);
-    const { error } = await supabase.from('categories').insert([{ type, value }]);
+    const { error } = await supabase.from(TBL.categories).insert([{ type, value }]);
     if (error) { alert('Erreur : ' + error.message); loadAll(); }
   }
   async function removeCategory(type, value, setter) {
     setter((prev) => prev.filter((o) => o !== value));
-    const { error } = await supabase.from('categories').delete().eq('type', type).eq('value', value);
+    const { error } = await supabase.from(TBL.categories).delete().eq('type', type).eq('value', value);
     if (error) { alert('Erreur : ' + error.message); loadAll(); }
   }
 
@@ -660,10 +969,15 @@ export default function App() {
 
   return (
     <div style={{ minHeight: '100vh', background: '#1B1815', color: '#F3E9D8' }}>
-      <NavTabs view={view} setView={setView} aTrier={aTrier} urgentCount={urgentCount} />
+      <NavTabs view={view} setView={setView} aTrier={aTrier} urgentCount={urgentCount} testMode={testMode} setTestMode={setTestMode} />
+      {testMode && (
+        <div className="mx-5 md:mx-10 mt-3 px-4 py-2 rounded flex items-center gap-2 text-sm font-medium" style={{ background: '#3A2A12', color: '#D98F2B', border: '1px solid #D98F2B' }}>
+          <FlaskConical size={15} /> Mode test actif — ces données sont séparées du vrai stock.
+        </div>
+      )}
       {loadError && (
         <div className="mx-5 md:mx-10 mt-4 p-3 rounded flex items-center gap-2 text-sm" style={{ background: '#3A241F', color: '#E8A98C', border: '1px solid #8B2E1E' }}>
-          <AlertCircle size={16} /> Impossible de charger les données : {loadError}. Vérifie les clés Supabase (variables d'environnement).
+          <AlertCircle size={16} /> Impossible de charger les données : {loadError}. Vérifie les clés Supabase (variables d'environnement){testMode ? ' et que les tables _demo existent.' : '.'}
         </div>
       )}
       {loading ? (
@@ -681,7 +995,7 @@ export default function App() {
               editing={!!editingId} onCancelEdit={cancelEdit}
             />
           ) : (
-            <CaveView products={products} toggleTrie={toggleTrie} deleteProduct={deleteProduct} deleteMany={deleteMany} maskMany={maskMany} onEdit={startEdit} />
+            <CaveView products={products} toggleTrie={toggleTrie} deleteProduct={deleteProduct} deleteMany={deleteMany} maskMany={maskMany} onEdit={startEdit} applyMovements={applyMovements} />
           )}
         </div>
       )}
