@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Home, Beer, Camera, Search, ChevronDown, ChevronRight, Check, Eye, EyeOff, Plus, Trash2,
-  AlertCircle, ListPlus, X, Loader2, Pencil, ArrowUpDown, FlaskConical, Upload, Layers,
+  AlertCircle, ListPlus, X, Loader2, Pencil, ArrowUpDown, FlaskConical, Upload, Layers, Archive, FileUp,
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
-const EMPTY_ROW = { nom: '', style: '', degre: '', format: '', rayon: '', lot: '', distributeur: '', date_entree: '', dluo: '', quantite: '', trie: false };
+const EMPTY_ROW = { nom: '', style: '', degre: '', format: '', rayon: '', lot: '', distributeur: '', date_entree: '', dluo: '', quantite: '', trie: false, garde: false };
 
 function daysLeft(dluo) {
   const today = new Date();
@@ -31,11 +31,13 @@ const STATUS_META = {
   ok: { label: 'OK', color: '#7A9B5E' },
 };
 
-// The most urgent status among several lots, used for grouped rows.
+// The most urgent status among several lots, used for grouped rows (ignores "garde" lots).
 const STATUS_ORDER = ['expire', 'j7', 'j15', 'j30', 'ok'];
 function worstStatus(items) {
+  const relevant = items.filter((it) => !it.garde);
+  if (relevant.length === 0) return 'ok';
   let idx = STATUS_ORDER.length - 1;
-  for (const it of items) idx = Math.min(idx, STATUS_ORDER.indexOf(statusOf(it.dluo)));
+  for (const it of relevant) idx = Math.min(idx, STATUS_ORDER.indexOf(statusOf(it.dluo)));
   return STATUS_ORDER[idx];
 }
 
@@ -43,7 +45,14 @@ function normalizeName(s) {
   return (s || '').trim().toUpperCase().replace(/\s+/g, ' ');
 }
 
-function CapBadge({ status }) {
+function CapBadge({ status, garde }) {
+  if (garde) {
+    return (
+      <span title="Bière de garde — DLUO non surveillée" style={{ display: 'inline-flex', color: '#8B7355' }}>
+        <Archive size={14} />
+      </span>
+    );
+  }
   const color = STATUS_META[status].color;
   return (
     <span
@@ -53,7 +62,17 @@ function CapBadge({ status }) {
   );
 }
 
-function DluoDisplay({ dluo }) {
+function DluoDisplay({ dluo, garde }) {
+  if (garde) {
+    return (
+      <div className="flex items-center gap-2">
+        <span className="font-mono">{dluo}</span>
+        <span className="px-1.5 py-0.5 rounded text-xs whitespace-nowrap flex items-center gap-1" style={{ background: '#8B735530', color: '#8B7355' }}>
+          <Archive size={10} /> Garde
+        </span>
+      </div>
+    );
+  }
   const d = daysLeft(dluo);
   const status = statusOf(dluo);
   const color = STATUS_META[status].color;
@@ -212,6 +231,11 @@ function SingleAddForm({ form, setForm, onAdd, saving, confirmed, formError, cat
       <label className="text-xs" style={{ color: '#A69884' }}>
         Quantité
         <input type="number" value={form.quantite} onChange={(e) => setForm({ ...form, quantite: e.target.value })} className="mt-1 w-full px-3 py-2.5 rounded text-sm" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#F3E9D8' }} />
+      </label>
+
+      <label className="flex items-center gap-2 text-sm sm:col-span-2 -mt-1" style={{ color: '#A69884' }}>
+        <input type="checkbox" checked={form.garde} onChange={(e) => setForm({ ...form, garde: e.target.checked })} style={{ accentColor: '#8B7355' }} />
+        <Archive size={14} /> Bière de garde — ne pas surveiller la DLUO
       </label>
 
       <div className="sm:col-span-2 flex items-center gap-3 mt-2 flex-wrap">
@@ -379,6 +403,47 @@ function ImportPanel({ products, applyMovements, onClose }) {
   const [preview, setPreview] = useState(null);
   const [applying, setApplying] = useState(false);
   const [result, setResult] = useState(null);
+  const [extracting, setExtracting] = useState(false);
+  const [fileError, setFileError] = useState('');
+  const [fileName, setFileName] = useState('');
+
+  async function handleFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setFileError('');
+    setFileName(file.name);
+    setExtracting(true);
+    try {
+      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        const pdfjsLib = await import('pdfjs-dist/build/pdf');
+        const pdfjsWorker = await import('pdfjs-dist/build/pdf.worker.min.js?url');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker.default;
+        const buf = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+        let full = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          let lastY = null;
+          for (const item of content.items) {
+            const y = item.transform[5];
+            if (lastY !== null && Math.abs(y - lastY) > 2) full += '\n';
+            else if (lastY !== null) full += ' ';
+            full += item.str;
+            lastY = y;
+          }
+          full += '\n';
+        }
+        setText(full);
+      } else {
+        const t = await file.text();
+        setText(t);
+      }
+    } catch (err) {
+      setFileError("Impossible de lire ce fichier : " + err.message);
+    }
+    setExtracting(false);
+  }
 
   function analyze() {
     const parsed = parseSalesReport(text);
@@ -432,6 +497,13 @@ function ImportPanel({ products, applyMovements, onClose }) {
 
       {!preview ? (
         <>
+          <label className="flex items-center gap-2 px-4 py-2.5 rounded text-sm font-medium cursor-pointer w-fit" style={{ background: '#D98F2B', color: '#1B1815' }}>
+            {extracting ? <Loader2 size={14} className="animate-spin" /> : <FileUp size={14} />}
+            {extracting ? 'Lecture du fichier...' : fileName ? `Fichier : ${fileName}` : 'Choisir un fichier (PDF, CSV, TXT)'}
+            <input type="file" accept=".pdf,.txt,.csv" onChange={handleFile} disabled={extracting} className="hidden" />
+          </label>
+          {fileError && <p className="text-xs mt-2" style={{ color: '#C1502E' }}>{fileError}</p>}
+          <p className="text-xs my-2" style={{ color: '#6B645A' }}>— ou colle le texte directement —</p>
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -509,13 +581,14 @@ const SORT_OPTIONS = {
   dluo_desc: { label: 'DLUO décroissante', fn: (a, b) => daysLeft(b.dluo) - daysLeft(a.dluo) },
   alpha: { label: 'Alphabétique', fn: (a, b) => a.nom.localeCompare(b.nom) },
   style: { label: 'Par style', fn: (a, b) => (a.style || '').localeCompare(b.style || '') },
+  rayon: { label: 'Par rayon', fn: (a, b) => (a.rayon || '').localeCompare(b.rayon || '') || a.nom.localeCompare(b.nom) },
 };
 
 function ProductRow({ p, selected, toggleSelect, toggleTrie, onEdit, deleteProduct, indent }) {
   return (
     <tr className="row-enter" style={{ borderTop: '1px solid #2D2822', opacity: p.trie ? 0.5 : 1 }}>
       <td className="py-3 pr-2"><input type="checkbox" checked={selected.includes(p.id)} onChange={() => toggleSelect(p.id)} style={{ accentColor: '#D98F2B' }} /></td>
-      <td className="py-3"><CapBadge status={statusOf(p.dluo)} /></td>
+      <td className="py-3"><CapBadge status={statusOf(p.dluo)} garde={p.garde} /></td>
       <td className="py-3 font-medium" style={{ paddingLeft: indent ? 20 : 0 }}>{indent ? '↳ ' : ''}{p.nom}</td>
       <td className="py-3" style={{ color: '#A69884' }}>{p.style}</td>
       <td className="py-3 font-mono">{p.degre}%</td>
@@ -523,7 +596,7 @@ function ProductRow({ p, selected, toggleSelect, toggleTrie, onEdit, deleteProdu
       <td className="py-3" style={{ color: '#A69884' }}>{p.rayon}</td>
       <td className="py-3 font-mono" style={{ color: '#A69884' }}>{p.lot}</td>
       <td className="py-3" style={{ color: '#A69884' }}>{p.distributeur}</td>
-      <td className="py-3"><DluoDisplay dluo={p.dluo} /></td>
+      <td className="py-3"><DluoDisplay dluo={p.dluo} garde={p.garde} /></td>
       <td className="py-3 font-mono">{p.quantite}</td>
       <td className="py-3 text-center">
         <button onClick={() => toggleTrie(p.id)} title={p.trie ? 'Remettre en rayon' : 'Marquer comme fait (masquer)'} className="p-1.5 rounded inline-flex" style={{ background: p.trie ? '#7A9B5E' : '#241F1A', border: '1px solid #3A332B', color: p.trie ? '#1B1815' : '#6B645A' }}>
@@ -546,7 +619,7 @@ function ProductCard({ p, selected, toggleSelect, toggleTrie, onEdit, deleteProd
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <input type="checkbox" checked={selected.includes(p.id)} onChange={() => toggleSelect(p.id)} style={{ accentColor: '#D98F2B' }} />
-          <CapBadge status={statusOf(p.dluo)} />
+          <CapBadge status={statusOf(p.dluo)} garde={p.garde} />
           <span className="font-medium">{indent ? '↳ ' : ''}{p.nom}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -557,7 +630,7 @@ function ProductCard({ p, selected, toggleSelect, toggleTrie, onEdit, deleteProd
           <button onClick={() => deleteProduct(p.id)} title="Supprimer définitivement" className="p-1.5 rounded" style={{ color: '#C1502E' }}><Trash2 size={14} /></button>
         </div>
       </div>
-      <div className="mb-1.5"><DluoDisplay dluo={p.dluo} /></div>
+      <div className="mb-1.5"><DluoDisplay dluo={p.dluo} garde={p.garde} /></div>
       <div className="text-xs flex flex-wrap gap-x-3 gap-y-1" style={{ color: '#A69884' }}>
         <span>{p.style}</span>
         <span className="font-mono">{p.degre}%</span>
@@ -825,7 +898,7 @@ export default function App() {
   }
 
   const aTrier = products.filter((p) => !p.trie).length;
-  const urgentCount = products.filter((p) => !p.trie && daysLeft(p.dluo) <= 30).length;
+  const urgentCount = products.filter((p) => !p.trie && !p.garde && daysLeft(p.dluo) <= 30).length;
 
   function cleanRow(r) {
     return {
@@ -840,6 +913,7 @@ export default function App() {
       dluo: r.dluo,
       quantite: r.quantite ? parseInt(r.quantite) : 0,
       trie: r.trie || false,
+      garde: r.garde || false,
     };
   }
 
@@ -847,7 +921,7 @@ export default function App() {
     setForm({
       nom: p.nom || '', style: p.style || '', degre: p.degre ?? '', format: p.format || '',
       rayon: p.rayon || '', lot: p.lot || '', distributeur: p.distributeur || '',
-      date_entree: p.date_entree || '', dluo: p.dluo || '', quantite: p.quantite ?? '', trie: p.trie || false,
+      date_entree: p.date_entree || '', dluo: p.dluo || '', quantite: p.quantite ?? '', trie: p.trie || false, garde: p.garde || false,
     });
     setEditingId(p.id);
     setMode('single');
