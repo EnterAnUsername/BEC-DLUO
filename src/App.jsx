@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Home, Beer, Camera, Search, ChevronDown, ChevronRight, Check, Eye, EyeOff, Plus, Trash2,
-  AlertCircle, ListPlus, X, Loader2, Pencil, ArrowUpDown, FlaskConical, Upload, Layers, Archive, FileUp,
+  AlertCircle, ListPlus, X, Loader2, Pencil, ArrowUpDown, FlaskConical, Upload, Layers, Archive, FileUp, Tags,
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
@@ -154,10 +154,11 @@ function NavTabs({ view, setView, aTrier, urgentCount, testMode, setTestMode }) 
   const tabs = [
     { id: 'accueil', label: 'Accueil', icon: Home },
     { id: 'cave', label: 'Cave', icon: Beer },
+    { id: 'categories', label: 'Catégories', icon: Tags },
   ];
   return (
-    <nav className="flex items-center justify-between px-5 md:px-10 pt-5">
-      <div className="flex gap-1">
+    <nav className="flex items-center justify-between px-5 md:px-10 pt-5 flex-wrap gap-2">
+      <div className="flex gap-1 overflow-x-auto">
         {tabs.map((t) => {
           const Icon = t.icon;
           const active = view === t.id;
@@ -374,8 +375,17 @@ function AccueilView(props) {
 
 // Parses lines like:
 // "360 MOINETTE BLONDE 33CL 1,41 0,000 0,00 -7,000 0,00 3,000 0,000 9,00 7,50 3,27 0,00 %"
-// Header order after the name: PMPA, Entrée, Val.Entree, Stock, Val.Stock, Vendu, CA TTC, CA HT, Marge, Ecoulement, Rentabilité, %
-// "Vendu" is therefore the 6th numeric token after the name (index 5).
+// We only need the name, the contenance (33CL, 75CL, 20L...) and "Vendu" (units sold).
+// The price and other monetary columns are ignored entirely.
+function extractSizeDigits(s) {
+  const m = (s || '').match(/(\d+(?:[.,]\d+)?)/);
+  return m ? m[1].replace(',', '.') : null;
+}
+
+function stripSize(s) {
+  return (s || '').replace(/\b\d+(?:[.,]\d+)?\s?(cl|ml|l)\b/gi, '').replace(/\s+/g, ' ').trim();
+}
+
 function parseSalesReport(text) {
   const lines = text.split('\n');
   const rows = [];
@@ -385,15 +395,30 @@ function parseSalesReport(text) {
     const tokens = line.split(/\s+/);
     if (tokens.length < 8) continue;
     if (!/^\d+$/.test(tokens[0])) continue;
-    const nameEndIdx = tokens.findIndex((t, idx) => idx > 0 && /^-?\d+[,.]\d{2,3}$/.test(t));
-    if (nameEndIdx < 2) continue;
-    const name = tokens.slice(1, nameEndIdx).join(' ');
-    const rest = tokens.slice(nameEndIdx);
+
+    // Preferred: stop the name at a contenance token (e.g. "33CL", "75CL", "20L").
+    const sizeIdx = tokens.findIndex((t, idx) => idx > 0 && /^\d+(?:[,.]\d+)?(cl|ml|l)$/i.test(t));
+    let name, format, numbersStart;
+    if (sizeIdx >= 2) {
+      name = tokens.slice(1, sizeIdx).join(' ');
+      format = tokens[sizeIdx];
+      numbersStart = sizeIdx + 1;
+    } else {
+      // Fallback: stop at the first token that starts with a decimal number
+      // (tolerates stray characters stuck to it, e.g. "1,41%" or OCR glitches).
+      const priceIdx = tokens.findIndex((t, idx) => idx > 0 && /^-?\d+[,.]\d{2,3}/.test(t));
+      if (priceIdx < 2) continue;
+      name = tokens.slice(1, priceIdx).join(' ');
+      format = null;
+      numbersStart = priceIdx;
+    }
+
+    const rest = tokens.slice(numbersStart);
     if (rest.length < 6) continue;
-    const vendu = parseFloat((rest[5] || '0').replace(',', '.'));
-    const qty = Math.round(vendu || 0);
+    const venduMatch = (rest[5] || '').match(/-?\d+[,.]\d+/);
+    const qty = Math.round(venduMatch ? parseFloat(venduMatch[0].replace(',', '.')) : 0);
     if (qty <= 0) continue;
-    rows.push({ nom: name, quantite_vendue: qty });
+    rows.push({ nom: name, format, quantite_vendue: qty });
   }
   return rows;
 }
@@ -424,15 +449,22 @@ function ImportPanel({ products, applyMovements, onClose }) {
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i);
           const content = await page.getTextContent();
-          let lastY = null;
+          // Text items aren't guaranteed to come in reading order: group by
+          // vertical position (line), then sort each line left-to-right by x.
+          const lines = [];
           for (const item of content.items) {
+            if (!item.str || !item.str.trim()) continue;
+            const x = item.transform[4];
             const y = item.transform[5];
-            if (lastY !== null && Math.abs(y - lastY) > 2) full += '\n';
-            else if (lastY !== null) full += ' ';
-            full += item.str;
-            lastY = y;
+            let line = lines.find((l) => Math.abs(l.y - y) < 2);
+            if (!line) { line = { y, items: [] }; lines.push(line); }
+            line.items.push({ x, str: item.str });
           }
-          full += '\n';
+          lines.sort((a, b) => b.y - a.y);
+          for (const line of lines) {
+            line.items.sort((a, b) => a.x - b.x);
+            full += line.items.map((it) => it.str).join(' ') + '\n';
+          }
         }
         setText(full);
       } else {
@@ -448,7 +480,14 @@ function ImportPanel({ products, applyMovements, onClose }) {
   function analyze() {
     const parsed = parseSalesReport(text);
     const rows = parsed.map((row) => {
-      const matches = products.filter((p) => normalizeName(p.nom) === normalizeName(row.nom));
+      const rowBase = normalizeName(stripSize(row.nom));
+      const rowSize = extractSizeDigits(row.format);
+      const matches = products.filter((p) => {
+        if (normalizeName(stripSize(p.nom)) !== rowBase) return false;
+        if (!rowSize) return true; // no contenance detected: match by name only
+        const pSize = extractSizeDigits(p.format);
+        return pSize === rowSize;
+      });
       return { ...row, include: matches.length > 0, matchCount: matches.length, totalStock: matches.reduce((s, m) => s + (m.quantite || 0), 0) };
     });
     setPreview(rows);
@@ -467,8 +506,14 @@ function ImportPanel({ products, applyMovements, onClose }) {
     const updates = [];
     for (const row of toApply) {
       let remaining = row.quantite_vendue;
+      const rowBase = normalizeName(stripSize(row.nom));
+      const rowSize = extractSizeDigits(row.format);
       const lots = products
-        .filter((p) => normalizeName(p.nom) === normalizeName(row.nom))
+        .filter((p) => {
+          if (normalizeName(stripSize(p.nom)) !== rowBase) return false;
+          if (!rowSize) return true;
+          return extractSizeDigits(p.format) === rowSize;
+        })
         .sort((a, b) => daysLeft(a.dluo) - daysLeft(b.dluo));
       for (const lot of lots) {
         if (remaining <= 0) break;
@@ -527,6 +572,7 @@ function ImportPanel({ products, applyMovements, onClose }) {
                   <tr style={{ color: '#A69884', textAlign: 'left' }}>
                     <th className="pb-2 pr-2 font-medium"></th>
                     <th className="pb-2 pr-2 font-medium">Nom détecté</th>
+                    <th className="pb-2 pr-2 font-medium">Contenance</th>
                     <th className="pb-2 pr-2 font-medium">Qté vendue</th>
                     <th className="pb-2 pr-2 font-medium">Correspondance</th>
                   </tr>
@@ -538,6 +584,7 @@ function ImportPanel({ products, applyMovements, onClose }) {
                         <input type="checkbox" checked={r.include} disabled={r.matchCount === 0} onChange={(e) => updateRow(i, 'include', e.target.checked)} style={{ accentColor: '#D98F2B' }} />
                       </td>
                       <td className="py-1.5 pr-2">{r.nom}</td>
+                      <td className="py-1.5 pr-2 font-mono" style={{ color: '#A69884' }}>{r.format || '—'}</td>
                       <td className="py-1.5 pr-2">
                         <input type="number" value={r.quantite_vendue} onChange={(e) => updateRow(i, 'quantite_vendue', parseInt(e.target.value) || 0)} className="w-16 px-2 py-1 rounded text-sm" style={{ background: '#1B1815', border: '1px solid #3A332B', color: '#F3E9D8' }} />
                       </td>
@@ -713,33 +760,35 @@ function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany, o
 
       {showImport && <ImportPanel products={products} applyMovements={applyMovements} onClose={() => setShowImport(false)} />}
 
-      <div className="px-5 md:px-10 py-3 flex flex-wrap gap-3 items-center" style={{ borderTop: '1px solid #3A332B', borderBottom: '1px solid #3A332B' }}>
-        <div className="flex items-center gap-2 px-3 py-2 rounded flex-1 min-w-[180px]" style={{ background: '#241F1A', border: '1px solid #3A332B' }}>
+      <div className="px-5 md:px-10 py-3 flex flex-col gap-3" style={{ borderTop: '1px solid #3A332B', borderBottom: '1px solid #3A332B' }}>
+        <div className="flex items-center gap-2 px-3 py-2 rounded" style={{ background: '#241F1A', border: '1px solid #3A332B' }}>
           <Search size={15} color="#A69884" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Rechercher une bière..." className="bg-transparent outline-none text-sm flex-1" style={{ color: '#F3E9D8' }} />
         </div>
-        {[
-          { value: styleFilter, setter: setStyleFilter, options: styles },
-          { value: rayonFilter, setter: setRayonFilter, options: rayons },
-          { value: statutFilter, setter: setStatutFilter, options: ['Tous', 'expire', 'j7', 'j15', 'j30', 'ok'] },
-        ].map((f, i) => (
-          <div key={i} className="relative">
-            <select value={f.value} onChange={(e) => f.setter(e.target.value)} className="px-3 py-2 pr-8 rounded text-sm" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#F3E9D8', appearance: 'none' }}>
-              {f.options.map((o) => (<option key={o} value={o}>{o === 'Tous' ? 'Tous' : STATUS_META[o] ? STATUS_META[o].label : o}</option>))}
+        <div className="flex flex-nowrap items-center gap-3 overflow-x-auto pb-1">
+          {[
+            { value: styleFilter, setter: setStyleFilter, options: styles },
+            { value: rayonFilter, setter: setRayonFilter, options: rayons },
+            { value: statutFilter, setter: setStatutFilter, options: ['Tous', 'expire', 'j7', 'j15', 'j30', 'ok'] },
+          ].map((f, i) => (
+            <div key={i} className="relative flex-shrink-0">
+              <select value={f.value} onChange={(e) => f.setter(e.target.value)} className="px-3 py-2 pr-8 rounded text-sm" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#F3E9D8', appearance: 'none' }}>
+                {f.options.map((o) => (<option key={o} value={o}>{o === 'Tous' ? 'Tous' : STATUS_META[o] ? STATUS_META[o].label : o}</option>))}
+              </select>
+              <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" color="#A69884" />
+            </div>
+          ))}
+          <div className="relative flex-shrink-0">
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="pl-8 pr-3 py-2 rounded text-sm" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#F3E9D8', appearance: 'none' }}>
+              {Object.entries(SORT_OPTIONS).map(([key, o]) => <option key={key} value={key}>{o.label}</option>)}
             </select>
-            <ChevronDown size={13} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" color="#A69884" />
+            <ArrowUpDown size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" color="#A69884" />
           </div>
-        ))}
-        <div className="relative">
-          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="pl-8 pr-3 py-2 rounded text-sm" style={{ background: '#241F1A', border: '1px solid #3A332B', color: '#F3E9D8', appearance: 'none' }}>
-            {Object.entries(SORT_OPTIONS).map(([key, o]) => <option key={key} value={key}>{o.label}</option>)}
-          </select>
-          <ArrowUpDown size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" color="#A69884" />
+          <button onClick={() => setShowMasked((s) => !s)} className="flex items-center gap-2 px-3 py-2 rounded text-sm flex-shrink-0 md:ml-auto" style={{ background: showMasked ? '#D98F2B' : '#241F1A', color: showMasked ? '#1B1815' : '#A69884', border: '1px solid #3A332B' }}>
+            {showMasked ? <Eye size={15} /> : <EyeOff size={15} />}
+            Masqués {showMasked ? 'affichés' : 'cachés'} ({maskedCount})
+          </button>
         </div>
-        <button onClick={() => setShowMasked((s) => !s)} className="flex items-center gap-2 px-3 py-2 rounded text-sm ml-auto" style={{ background: showMasked ? '#D98F2B' : '#241F1A', color: showMasked ? '#1B1815' : '#A69884', border: '1px solid #3A332B' }}>
-          {showMasked ? <Eye size={15} /> : <EyeOff size={15} />}
-          Masqués {showMasked ? 'affichés' : 'cachés'} ({maskedCount})
-        </button>
       </div>
 
       {selected.length > 0 && (
@@ -848,6 +897,133 @@ function CaveView({ products, toggleTrie, deleteProduct, deleteMany, maskMany, o
           );
         })}
         {filtered.length === 0 && <p className="text-center py-10" style={{ color: '#6B645A' }}>Aucune référence ne correspond à ces filtres.</p>}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Catégories ---------- */
+
+function CategoryRow({ value, count, onRename, onRemove }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  function confirm() {
+    const v = draft.trim();
+    if (v && v !== value) onRename(v);
+    setEditing(false);
+  }
+
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 rounded" style={{ background: '#241F1A', border: '1px solid #3A332B' }}>
+      {editing ? (
+        <>
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') confirm(); if (e.key === 'Escape') { setDraft(value); setEditing(false); } }}
+            className="flex-1 px-2 py-1 rounded text-sm"
+            style={{ background: '#1B1815', border: '1px solid #D98F2B', color: '#F3E9D8' }}
+          />
+          <button onClick={confirm} title="Valider" style={{ color: '#7A9B5E' }}><Check size={15} /></button>
+          <button onClick={() => { setDraft(value); setEditing(false); }} title="Annuler" style={{ color: '#A69884' }}><X size={15} /></button>
+        </>
+      ) : (
+        <>
+          <span className="flex-1 text-sm">{value}</span>
+          <span className="text-xs font-mono" style={{ color: '#6B645A' }}>{count} fiche{count > 1 ? 's' : ''}</span>
+          <button onClick={() => setEditing(true)} title="Renommer" style={{ color: '#D98F2B' }}><Pencil size={13} /></button>
+          <button onClick={onRemove} title="Supprimer la catégorie" style={{ color: '#C1502E' }}><Trash2 size={13} /></button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function CategorySection({ title, options, counts, onAdd, onRename, onRemove }) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  function confirmAdd() {
+    const v = draft.trim();
+    if (v && !options.includes(v)) onAdd(v);
+    setDraft('');
+    setAdding(false);
+  }
+
+  return (
+    <div className="p-4 rounded" style={{ background: '#211C17', border: '1px solid #3A332B' }}>
+      <h3 className="font-display text-lg mb-3">{title}</h3>
+      <div className="flex flex-col gap-2">
+        {options.length === 0 && <p className="text-xs" style={{ color: '#6B645A' }}>Aucune catégorie pour l'instant.</p>}
+        {options.map((o) => (
+          <CategoryRow
+            key={o}
+            value={o}
+            count={counts[o] || 0}
+            onRename={(newVal) => onRename(o, newVal)}
+            onRemove={() => onRemove(o)}
+          />
+        ))}
+        {!adding ? (
+          <button onClick={() => setAdding(true)} className="flex items-center gap-2 px-3 py-2 rounded text-sm" style={{ background: '#241F1A', border: '1px dashed #3A332B', color: '#D98F2B' }}>
+            <Plus size={14} /> Ajouter
+          </button>
+        ) : (
+          <div className="flex gap-2">
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); confirmAdd(); } }}
+              placeholder="Nouvelle catégorie..."
+              className="flex-1 px-3 py-2 rounded text-sm"
+              style={{ background: '#241F1A', border: '1px solid #D98F2B', color: '#F3E9D8' }}
+            />
+            <button onClick={confirmAdd} className="px-3 rounded" style={{ background: '#D98F2B', color: '#1B1815' }}><Check size={14} /></button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CategoriesView({ products, catProps }) {
+  function countFor(field) {
+    const c = {};
+    for (const p of products) {
+      const v = p[field];
+      if (v) c[v] = (c[v] || 0) + 1;
+    }
+    return c;
+  }
+
+  const sections = [
+    { key: 'style', title: 'Styles', field: 'style' },
+    { key: 'rayon', title: 'Rayons', field: 'rayon' },
+    { key: 'format', title: 'Formats', field: 'format' },
+    { key: 'distributeur', title: 'Distributeurs', field: 'distributeur' },
+  ];
+
+  return (
+    <div className="px-5 md:px-10 py-8">
+      <h1 className="font-display text-2xl md:text-3xl mb-1">Catégories</h1>
+      <p className="text-sm mb-6" style={{ color: '#A69884' }}>
+        Renomme une catégorie et toutes les fiches concernées suivent automatiquement. La supprimer ne touche pas les fiches existantes, elle disparaît juste des menus déroulants.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {sections.map((s) => (
+          <CategorySection
+            key={s.key}
+            title={s.title}
+            options={catProps[`${s.key}Options`]}
+            counts={countFor(s.field)}
+            onAdd={catProps[`add${s.key[0].toUpperCase()}${s.key.slice(1)}Option`]}
+            onRename={catProps[`rename${s.key[0].toUpperCase()}${s.key.slice(1)}Option`]}
+            onRemove={catProps[`remove${s.key[0].toUpperCase()}${s.key.slice(1)}Option`]}
+          />
+        ))}
       </div>
     </div>
   );
@@ -1025,20 +1201,32 @@ export default function App() {
     const { error } = await supabase.from(TBL.categories).delete().eq('type', type).eq('value', value);
     if (error) { alert('Erreur : ' + error.message); loadAll(); }
   }
+  // Renaming cascades to every product currently using that category value.
+  async function renameCategory(type, oldValue, newValue, setter) {
+    setter((prev) => prev.map((o) => (o === oldValue ? newValue : o)));
+    setProducts((prev) => prev.map((p) => (p[type] === oldValue ? { ...p, [type]: newValue } : p)));
+    const { error: catErr } = await supabase.from(TBL.categories).update({ value: newValue }).eq('type', type).eq('value', oldValue);
+    const { error: prodErr } = await supabase.from(TBL.produits).update({ [type]: newValue }).eq(type, oldValue);
+    if (catErr || prodErr) { alert('Erreur : ' + (catErr || prodErr).message); loadAll(); }
+  }
 
   const catProps = {
     styleOptions,
     addStyleOption: (v) => addCategory('style', v, setStyleOptions),
     removeStyleOption: (v) => removeCategory('style', v, setStyleOptions),
+    renameStyleOption: (old, v) => renameCategory('style', old, v, setStyleOptions),
     rayonOptions,
     addRayonOption: (v) => addCategory('rayon', v, setRayonOptions),
     removeRayonOption: (v) => removeCategory('rayon', v, setRayonOptions),
+    renameRayonOption: (old, v) => renameCategory('rayon', old, v, setRayonOptions),
     formatOptions,
     addFormatOption: (v) => addCategory('format', v, setFormatOptions),
     removeFormatOption: (v) => removeCategory('format', v, setFormatOptions),
+    renameFormatOption: (old, v) => renameCategory('format', old, v, setFormatOptions),
     distributeurOptions,
     addDistributeurOption: (v) => addCategory('distributeur', v, setDistributeurOptions),
     removeDistributeurOption: (v) => removeCategory('distributeur', v, setDistributeurOptions),
+    renameDistributeurOption: (old, v) => renameCategory('distributeur', old, v, setDistributeurOptions),
   };
 
   return (
@@ -1068,8 +1256,10 @@ export default function App() {
               confirmedCount={confirmedCount} catProps={catProps}
               editing={!!editingId} onCancelEdit={cancelEdit}
             />
-          ) : (
+          ) : view === 'cave' ? (
             <CaveView products={products} toggleTrie={toggleTrie} deleteProduct={deleteProduct} deleteMany={deleteMany} maskMany={maskMany} onEdit={startEdit} applyMovements={applyMovements} />
+          ) : (
+            <CategoriesView products={products} catProps={catProps} />
           )}
         </div>
       )}
